@@ -1,3 +1,4 @@
 spotipy
 PyQt6
 python-dotenv
+qtawesome

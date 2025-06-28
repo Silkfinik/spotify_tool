@@ -9,7 +9,10 @@ class SpotifyClient:
     """
 
     def __init__(self, spotipy_oauth_manager):
-        self.sp = spotipy.Spotify(auth_manager=spotipy_oauth_manager)
+        self.sp = spotipy.Spotify(
+            auth_manager=spotipy_oauth_manager,
+            requests_timeout=None
+        )
 
     def _get_all_items(self, results):
         """Собирает все элементы со всех страниц ответа API."""

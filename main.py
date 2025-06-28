@@ -18,7 +18,9 @@ from ui_main_window import MainWindow
 from auth_manager import AuthManager
 from spotify_client import SpotifyClient
 from exporter import export_to_csv, export_to_json, export_to_txt
+from export_dialog import ExportDialog
 from import_dialog import ImportDialog
+from importer import parse_file
 
 
 def chunks(iterable, size=100):
@@ -123,31 +125,40 @@ class SpotifyApp(QObject):
     # --- Инфраструктура для многопоточности ---
 
     def run_long_task(self, fn, on_finish, *args, label_text="Выполнение операции..."):
-        """Запускает долгую задачу в отдельном потоке и показывает диалог прогресса."""
+        """Запускает долгую задачу в отдельном потоке и показывает МОДАЛЬНЫЙ диалог прогресса."""
         if self.thread and self.thread.isRunning():
-            print("Предыдущая операция еще не завершена.")
+            self.update_status("Предыдущая операция еще не завершена.")
             return
 
         self.thread = QThread()
         self.worker = Worker(fn, *args)
         self.worker.moveToThread(self.thread)
 
-        # ... (код создания QProgressDialog без изменений) ...
+        # --> ИЗМЕНЕНИЕ ЗДЕСЬ: Создаем модальный диалог <--
+        self.progress_dialog = QProgressDialog(
+            label_text, "Отмена", 0, 0, self.window)
+        # Устанавливаем модальность. Это заблокирует основное окно.
+        self.progress_dialog.setWindowModality(
+            Qt.WindowModality.ApplicationModal)
+        # Показываем, если операция дольше 0.5 сек
+        self.progress_dialog.setMinimumDuration(500)
+        self.progress_dialog.setWindowTitle("Пожалуйста, подождите")
+
+        self.progress_dialog.canceled.connect(self.cancel_task)
 
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(on_finish)
         self.worker.error.connect(self.on_task_error)
 
+        # Сигналы для очистки
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
         self.thread.finished.connect(self.restore_ui)
-
-        # --> ДОБАВЛЕНО: Подключаем новый слот для очистки ссылок <--
         self.thread.finished.connect(self.on_thread_finished)
 
+        # Запускаем поток
         self.thread.start()
-        # ... (код показа диалога и курсора) ...
 
     # --> НОВЫЙ МЕТОД-СЛОТ <--
     def on_thread_finished(self):
@@ -156,17 +167,18 @@ class SpotifyApp(QObject):
         self.worker = None
 
     def restore_ui(self):
-        """Восстанавливает курсор и закрывает диалог прогресса."""
+        """Закрывает диалог прогресса. Курсор и окно восстановятся автоматически."""
         if self.progress_dialog:
+            # Закрываем диалог и сбрасываем ссылку на него
             self.progress_dialog.close()
             self.progress_dialog = None
-        QApplication.restoreOverrideCursor()
 
     def on_task_error(self, error_info):
         """Обрабатывает ошибку из потока."""
         print("Произошла ошибка в рабочем потоке:")
         print(error_info[2])
         self.update_status(f"Ошибка: {error_info[1]}")
+        # Убедимся, что UI восстановится даже при ошибке
         self.restore_ui()
 
     def cancel_task(self):
@@ -176,6 +188,7 @@ class SpotifyApp(QObject):
             self.thread.requestInterruption()
             self.thread.quit()
             self.thread.wait(500)
+        # Восстанавливаем UI после отмены
         self.restore_ui()
 
     def update_status(self, message):
