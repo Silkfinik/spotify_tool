@@ -63,18 +63,39 @@ QComboBox QAbstractItemView {
 QTableWidget {
     background-color: #181818;
     border: 1px solid #282828;
-    gridline-color: #282828; /* Делаем сетку темной */
+    /* --> ИЗМЕНЕНО: Более светлый и тонкий цвет для сетки <-- */
+    gridline-color: #2A2A2A; 
 }
-QHeaderView::section {
-    background-color: #121212;
-    color: #FFFFFF;
-    padding: 4px;
-    border: 1px solid #282828;
-    font-weight: bold;
+QTableWidget::item {
+    /* Добавим внутренние отступы для ячеек, чтобы текст не прилипал к краям */
+    padding-left: 5px;
 }
 QTableWidget::item:selected {
     background-color: #1DB954;
     color: #121212;
+}
+
+/* Стили для заголовков (горизонтальных и вертикальных) */
+QHeaderView::section {
+    background-color: #121212;
+    color: #FFFFFF;
+    padding: 6px;
+    border: 1px solid #282828;
+    border-bottom: 2px solid #282828; /* Нижняя граница чуть толще */
+    font-weight: bold;
+}
+
+/* --> НОВЫЙ СТИЛЬ: для вертикального заголовка (нумерации строк) <-- */
+QHeaderView::section:vertical {
+    font-weight: normal; /* Убираем жирность для номеров */
+    color: #A0A0A0;      /* Делаем цвет цифр более приглушенным */
+    padding-right: 5px;  /* Отступ справа для цифр */
+}
+
+/* --> НОВЫЙ СТИЛЬ: для уголка между заголовками <-- */
+QTableCornerButton::section {
+    background-color: #121212;
+    border: 1px solid #282828;
 }
 
 /* Стили для списка плейлистов */

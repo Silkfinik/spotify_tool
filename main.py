@@ -468,9 +468,19 @@ class SpotifyApp(QObject):
 # --- Точка входа в приложение ---
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+
+    # --> НОВАЯ ЛОГИКА: Загружаем и применяем файл стилей <--
+    try:
+        with open("style.qss", "r") as f:
+            app.setStyleSheet(f.read())
+    except FileNotFoundError:
+        print("Файл style.qss не найден. Будет использован стандартный стиль.")
+
     spotify_app = SpotifyApp()
+
     if spotify_app.auth_manager.get_cached_token():
         print("Обнаружен кешированный токен, автоматический вход...")
         spotify_app.on_login_success()
+
     spotify_app.window.show()
     sys.exit(app.exec())
