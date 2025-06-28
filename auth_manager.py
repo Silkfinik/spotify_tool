@@ -28,7 +28,12 @@ class AuthManager:
                              "SPOTIPY_CLIENT_SECRET, и SPOTIPY_REDIRECT_URI в файле .env")
 
         # auth_manager.py, внутри __init__
-        scope = "user-read-private user-read-email playlist-read-private user-library-read"
+        scope = (
+            "user-read-private user-read-email "
+            "playlist-read-private "
+            "playlist-modify-public playlist-modify-private "
+            "user-library-read user-library-modify"
+        )
 
         self.sp_oauth = SpotifyOAuth(
             client_id=self.client_id,

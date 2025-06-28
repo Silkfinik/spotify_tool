@@ -3,22 +3,28 @@
 import sys
 import webbrowser
 import threading
+import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from functools import partial
 
-from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog
-from PyQt6.QtCore import QObject, pyqtSignal, Qt
+from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu
+from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt
+from PyQt6.QtGui import QCursor
 
 # Импортируем наши классы
 from ui_main_window import MainWindow
 from auth_manager import AuthManager
 from spotify_client import SpotifyClient
-from exporter import export_to_csv
+from exporter import export_to_csv, export_to_json, export_to_txt
+from export_dialog import ExportDialog
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
-    # ... код этого класса остается без изменений ...
+    """
+    Обработчик для веб-сервера, который принимает редирект от Spotify.
+    """
+
     def __init__(self, request, client_address, server, app_instance):
         self.app_instance = app_instance
         super().__init__(request, client_address, server)
@@ -42,7 +48,33 @@ class CallbackHandler(BaseHTTPRequestHandler):
         threading.Thread(target=self.server.shutdown).start()
 
 
+class Worker(QObject):
+    """
+    Универсальный 'рабочий' для выполнения задач в отдельном потоке.
+    """
+    finished = pyqtSignal(object)
+    error = pyqtSignal(tuple)
+
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+
+    def run(self):
+        """Выполняет задачу."""
+        try:
+            result = self.fn(*self.args, **self.kwargs)
+            self.finished.emit(result)
+        except Exception:
+            self.error.emit((sys.exc_info()[0], sys.exc_info()[
+                            1], traceback.format_exc()))
+
+
 class SpotifyApp(QObject):
+    """
+    Главный класс приложения, связывающий UI и логику.
+    """
     code_received_signal = pyqtSignal(str)
 
     def __init__(self):
@@ -54,233 +86,225 @@ class SpotifyApp(QObject):
             sys.exit(1)
 
         self.window = MainWindow()
-        self.spotify_client = None  # <-- ДОБАВЛЕНО
-        # <-- ДОБАВЛЕНО: для хранения данных о плейлистах (id и name)
+        self.spotify_client = None
         self.playlists = []
-        self.current_playlist_id = None  # <-- ДОБАВЛЕНО
-        self.is_playlist_view = False   # <-- ДОБАВЛЕНО: для отслеживания контекста
+        self.current_playlist_id = None
         self.current_playlist_name = ""
+        self.is_playlist_view = False
 
-        # Подключение сигналов к слотам (методам)
+        self.thread = None
+        self.worker = None
+
         self.window.login_button.clicked.connect(self.start_login)
         self.code_received_signal.connect(self.process_auth_code)
         self.window.playlist_list.itemClicked.connect(
-            self.display_tracks)  # <-- НОВЫЙ СИГНАЛ
-        self.window.export_button.clicked.connect(self.open_export_dialog)
+            self.display_tracks_from_playlist)
+        self.window.export_button.clicked.connect(self.export_tracks)
         self.window.search_button.clicked.connect(
-            self.search_and_display_tracks)  # <-- НОВЫЙ СИГНАЛ
+            self.search_and_display_tracks)
         self.window.search_bar.returnPressed.connect(
-            self.search_and_display_tracks)  # <-- Удобство: поиск по Enter
+            self.search_and_display_tracks)
         self.window.track_table.customContextMenuRequested.connect(
             self.show_track_context_menu)
+
+    # --- Инфраструктура для многопоточности ---
+
+    def run_long_task(self, fn, on_finish, *args, **kwargs):
+        self.thread = QThread()
+        self.worker = Worker(fn, *args, **kwargs)
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(on_finish)
+        self.worker.error.connect(self.on_task_error)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+        self.thread.finished.connect(self.restore_ui)
+        self.thread.start()
+        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        self.window.setEnabled(False)
+
+    def restore_ui(self):
+        QApplication.restoreOverrideCursor()
+        self.window.setEnabled(True)
+
+    def on_task_error(self, error_info):
+        print("Произошла ошибка в рабочем потоке:")
+        print(error_info[2])
+        self.update_status(f"Ошибка: {error_info[1]}")
+        self.restore_ui()
+
+    def update_status(self, message):
+        self.window.statusBar().showMessage(message)
+
+    # --- Методы-инициаторы ---
 
     def start_login(self):
         self.start_callback_server()
         auth_url = self.auth_manager.get_auth_url()
         webbrowser.open(auth_url)
-        print("Открыта страница входа Spotify в браузере...")
+        self.update_status("Ожидание авторизации в браузере...")
 
     def start_callback_server(self):
-        def handler_factory(*args, **kwargs):
-            return CallbackHandler(*args, **kwargs, app_instance=self)
+        handler_factory = lambda *args, **kwargs: CallbackHandler(
+            *args, **kwargs, app_instance=self)
         port = urlparse(self.auth_manager.redirect_uri).port
         server_address = ('127.0.0.1', port)
         httpd = HTTPServer(server_address, handler_factory)
-        server_thread = threading.Thread(target=httpd.serve_forever)
-        server_thread.daemon = True
+        server_thread = threading.Thread(
+            target=httpd.serve_forever, daemon=True)
         server_thread.start()
         print(
             f"Локальный сервер запущен на порту {port} для перехвата кода...")
 
     def process_auth_code(self, code):
-        print("Код авторизации получен, обмениваем его на токен...")
+        self.update_status("Код получен, обмен на токен...")
         try:
             self.auth_manager.get_token(code)
-            print("✅ Токен успешно получен и сохранен в кеш.")
-            self.window.login_button.setText("✅ Успешно")
-            self.window.login_button.setEnabled(False)
-
-            # Создаем клиент Spotify и загружаем плейлисты
-            # v-- ИЗМЕНЕНИЕ ЗДЕСЬ --v
-            self.spotify_client = SpotifyClient(self.auth_manager.sp_oauth)
-            self.load_user_playlists()
-
+            self.on_login_success()
         except Exception as e:
-            print(f"❌ Ошибка при получении токена: {e}")
-            self.window.login_button.setText("Ошибка входа")
+            self.on_task_error((type(e), e, traceback.format_exc()))
 
-    # --> НОВЫЙ МЕТОД <--
+    def on_login_success(self):
+        self.update_status("Успешный вход. Загрузка данных...")
+        self.window.login_button.setText("✅ Успешно")
+        self.window.login_button.setEnabled(False)
+        self.spotify_client = SpotifyClient(self.auth_manager.sp_oauth)
+        self.load_user_playlists()
+
     def load_user_playlists(self):
-        """Загружает плейлисты пользователя и отображает их в списке."""
-        print("Загрузка плейлистов...")
-        self.playlists = self.spotify_client.get_user_playlists()
-        self.window.playlist_list.clear()  # Очищаем список перед заполнением
-        for playlist in self.playlists:
-            self.window.playlist_list.addItem(playlist['name'])
-        print(f"Загружено {len(self.playlists)} плейлистов.")
+        self.update_status("Загрузка плейлистов...")
+        self.run_long_task(
+            self.spotify_client.get_user_playlists, self.on_playlists_loaded)
 
-    # --> НОВЫЙ МЕТОД <--
-    def display_tracks(self, item):
+    def display_tracks_from_playlist(self, item):
         row = self.window.playlist_list.row(item)
         selected_playlist = self.playlists[row]
         self.current_playlist_id = selected_playlist['id']
-        # <-- ДОБАВЛЕНО
         self.current_playlist_name = selected_playlist['name']
         self.is_playlist_view = True
 
-        print(
-            f"Загрузка треков для плейлиста '{self.current_playlist_name}'...")
-        tracks = self.spotify_client.get_playlist_tracks(playlist_id)
+        self.refresh_track_view()
 
-        self.window.track_table.setRowCount(0)
-        self.window.track_table.setRowCount(len(tracks))
-
-        for row_num, track_data in enumerate(tracks):
-            self.window.track_table.setItem(
-                row_num, 0, QTableWidgetItem(track_data['name']))
-            self.window.track_table.setItem(
-                row_num, 1, QTableWidgetItem(track_data['artist']))
-            self.window.track_table.setItem(
-                row_num, 2, QTableWidgetItem(track_data['album']))
-
-        # Активируем кнопку экспорта, только если есть треки
-        self.window.export_button.setEnabled(
-            len(tracks) > 0)  # <-- ИЗМЕНЕНО
-        print(f"Отображено {len(tracks)} треков.")
-        """Отображает треки выбранного плейлиста в таблице."""
-        # Находим, на какой по счету плейлист нажал пользователь
-        row = self.window.playlist_list.row(item)
-        selected_playlist = self.playlists[row]
-        playlist_id = selected_playlist['id']
-        playlist_name = selected_playlist['name']
-
-        print(f"Загрузка треков для плейлиста '{playlist_name}'...")
-        tracks = self.spotify_client.get_playlist_tracks(playlist_id)
-
-        # Очищаем таблицу перед заполнением
-        self.window.track_table.setRowCount(0)
-        self.window.track_table.setRowCount(len(tracks))
-
-        # Заполняем таблицу данными
-        for row_num, track_data in enumerate(tracks):
-            self.window.track_table.setItem(
-                row_num, 0, QTableWidgetItem(track_data['name']))
-            self.window.track_table.setItem(
-                row_num, 1, QTableWidgetItem(track_data['artist']))
-            self.window.track_table.setItem(
-                row_num, 2, QTableWidgetItem(track_data['album']))
-
-        # После загрузки треков активируем кнопку экспорта
-        self.window.export_button.setEnabled(True)
-        print(f"Отображено {len(tracks)} треков.")
+    def refresh_track_view(self):
+        if self.is_playlist_view and self.current_playlist_id:
+            self.update_status(
+                f"Загрузка треков из '{self.current_playlist_name}'...")
+            self.run_long_task(
+                self.spotify_client.get_playlist_tracks,
+                self.on_tracks_loaded,
+                self.current_playlist_id
+            )
 
     def search_and_display_tracks(self):
-
-        self.is_playlist_view = False
-        """Выполняет поиск треков и отображает их в таблице."""
         if not self.spotify_client:
-            print("Сначала войдите в Spotify.")
-            self.window.statusBar().showMessage("Сначала войдите в Spotify.", 3000)
-            return
-
+            return self.update_status("Сначала войдите в Spotify.")
         query = self.window.search_bar.text()
         if not query:
-            print("Поисковый запрос не может быть пустым.")
             return
 
-        print(f"Поиск по запросу: '{query}'...")
-        tracks = self.spotify_client.search_tracks(query)
-        # Обновляем для экспорта
+        self.is_playlist_view = False
         self.current_playlist_name = f"Результаты поиска по '{query}'"
-        self.populate_track_table(tracks)
-        print(f"Найдено {len(tracks)} треков.")
+        self.update_status(f"Поиск по запросу: '{query}'...")
+        self.run_long_task(self.spotify_client.search_tracks,
+                           self.on_tracks_loaded, query)
 
-    # --> НОВЫЙ ВСПОМОГАТЕЛЬНЫЙ МЕТОД <--
+    def export_tracks(self):
+        if self.window.track_table.rowCount() == 0:
+            return self.update_status("Нет данных для экспорта.")
+        dialog = ExportDialog(self.window)
+        if not dialog.exec():
+            return
+
+        settings = dialog.get_settings()
+        file_format = settings['format']
+
+        track_data = [{
+            "id": self.window.track_table.item(row, 0).data(Qt.ItemDataRole.UserRole),
+            "name": self.window.track_table.item(row, 0).text(),
+            "artist": self.window.track_table.item(row, 1).text(),
+            "album": self.window.track_table.item(row, 2).text(),
+        } for row in range(self.window.track_table.rowCount())]
+
+        file_extensions = {
+            "csv": "CSV Files (*.csv)", "json": "JSON Files (*.json)", "txt": "Text Files (*.txt)"}
+        default_filename = f"{self.current_playlist_name}.{file_format}"
+        filename, _ = QFileDialog.getSaveFileName(
+            self.window, "Сохранить как...", default_filename, file_extensions[file_format])
+
+        if filename:
+            self.update_status(f"Экспорт в {file_format.upper()}...")
+            exporter_fn, args = None, ()
+            if file_format == 'csv':
+                exporter_fn, args = export_to_csv, (
+                    track_data, filename, settings['columns'])
+            elif file_format == 'json':
+                exporter_fn, args = export_to_json, (track_data, filename)
+            elif file_format == 'txt':
+                exporter_fn, args = export_to_txt, (
+                    track_data, filename, settings['template'])
+            if exporter_fn:
+                self.run_long_task(exporter_fn, self.on_export_finished, *args)
+
+    # --- Методы-слоты для обработки результатов ---
+
+    def on_playlists_loaded(self, playlists):
+        self.playlists = playlists
+        self.window.playlist_list.clear()
+        for playlist in self.playlists:
+            self.window.playlist_list.addItem(playlist['name'])
+        self.update_status(f"Загружено {len(self.playlists)} плейлистов.")
+
+    def on_tracks_loaded(self, tracks):
+        self.populate_track_table(tracks)
+        self.update_status(f"Загружено {len(tracks)} треков.")
+
+    def on_export_finished(self, success):
+        self.update_status(
+            "Экспорт успешно завершен." if success else "Ошибка во время экспорта.")
+
+    def on_like_status_changed(self, _):
+        self.update_status("Статус 'Понравившихся' обновлен.")
+
+    def on_playlist_modified(self, _):
+        self.update_status("Плейлист изменен. Обновление вида...")
+        self.refresh_track_view()
+
+    # --- Основная логика и UI ---
+
     def populate_track_table(self, tracks: list[dict]):
-        """Очищает и заполняет таблицу треков данными."""
         self.window.track_table.setRowCount(0)
         self.window.track_table.setRowCount(len(tracks))
-
         for row_num, track_data in enumerate(tracks):
-
             name_item = QTableWidgetItem(track_data['name'])
-            name_item.setData(Qt.ItemDataRole.UserRole,
-                              track_data['id'])  # Сохраняем ID
-
-            self.window.track_table.setItem(
-                row_num, 0, QTableWidgetItem(track_data['name']))
+            name_item.setData(Qt.ItemDataRole.UserRole, track_data.get('id'))
+            self.window.track_table.setItem(row_num, 0, name_item)
             self.window.track_table.setItem(
                 row_num, 1, QTableWidgetItem(track_data['artist']))
             self.window.track_table.setItem(
                 row_num, 2, QTableWidgetItem(track_data['album']))
-
         self.window.export_button.setEnabled(len(tracks) > 0)
 
-    def open_export_dialog(self):
-        """
-        Открывает диалог сохранения файла и экспортирует данные из таблицы.
-        """
-        if self.window.track_table.rowCount() == 0:
-            print("Нет данных для экспорта.")
-            return
-
-        # Предлагаем имя файла на основе названия плейлиста
-        default_filename = f"{self.current_playlist_name}.csv"
-
-        # Открываем стандартный диалог сохранения
-        filename, _ = QFileDialog.getSaveFileName(
-            self.window,
-            "Сохранить как...",
-            default_filename,
-            "CSV Files (*.csv)"
-        )
-
-        # Если пользователь выбрал файл и нажал "Сохранить"
-        if filename:
-            # 1. Собираем заголовки
-            headers = [
-                self.window.track_table.horizontalHeaderItem(i).text()
-                for i in range(self.window.track_table.columnCount())
-            ]
-
-            # 2. Собираем данные из всех ячеек таблицы
-            data_to_export = [headers]
-            for row in range(self.window.track_table.rowCount()):
-                row_data = []
-                for col in range(self.window.track_table.columnCount()):
-                    item = self.window.track_table.item(row, col)
-                    row_data.append(item.text() if item else "")
-                data_to_export.append(row_data)
-
-            # 3. Вызываем функцию экспорта
-            if export_to_csv(data_to_export, filename):
-                # Показываем сообщение в статус-баре на 5 секунд
-                self.window.statusBar().showMessage(
-                    f"Файл успешно сохранен: {filename}", 5000)
-
+    # ---> ИСПРАВЛЕННЫЙ МЕТОД КОНТЕКСТНОГО МЕНЮ <---
     def show_track_context_menu(self, position):
-        """Создает и показывает контекстное меню для выделенных треков."""
         selected_items = self.window.track_table.selectedItems()
         if not selected_items:
             return
 
-        # Получаем уникальные ID выделенных треков
-        selected_track_ids = list(set(
-            self.window.track_table.item(
-                item.row(), 0).data(Qt.ItemDataRole.UserRole)
-            for item in selected_items
-        ))
+        selected_track_ids = list(set(self.window.track_table.item(
+            item.row(), 0).data(Qt.ItemDataRole.UserRole) for item in selected_items))
+        selected_track_ids = [tid for tid in selected_track_ids if tid]
+        if not selected_track_ids:
+            return
 
-        menu = self.window.track_table.createStandardContextMenu()
+        menu = QMenu(self.window.track_table)
 
         # 1. Подменю "Добавить в плейлист"
         add_to_playlist_menu = menu.addMenu("Добавить в плейлист")
         for playlist in self.playlists:
-            # Нельзя добавить треки в "Понравившиеся" через это меню
             if playlist['id'] == 'liked_songs':
                 continue
             action = add_to_playlist_menu.addAction(playlist['name'])
-            # Используем partial, чтобы передать аргументы в обработчик
             action.triggered.connect(
                 partial(self.add_selected_to_playlist, playlist['id'], selected_track_ids))
 
@@ -293,56 +317,51 @@ class SpotifyApp(QObject):
                 partial(self.remove_selected_from_playlist, selected_track_ids))
 
         # 3. Пункт "Добавить/Удалить из Любимых"
-        is_liked_list = self.spotify_client.check_if_tracks_are_liked(
-            selected_track_ids)
-        # Логика для кнопки: если хотя бы один не лайкнут - предлагаем лайкнуть все.
-        if not all(is_liked_list):
-            like_action = menu.addAction("Добавить в 'Понравившиеся'")
-            like_action.triggered.connect(
-                partial(self.add_selected_to_liked, selected_track_ids))
-        else:
-            unlike_action = menu.addAction("Удалить из 'Понравившихся'")
-            unlike_action.triggered.connect(
-                partial(self.remove_selected_from_liked, selected_track_ids))
+        try:
+            is_liked_list = self.spotify_client.check_if_tracks_are_liked(
+                selected_track_ids)
+            if not all(is_liked_list):
+                like_action = menu.addAction("Добавить в 'Понравившиеся'")
+                like_action.triggered.connect(
+                    partial(self.add_selected_to_liked, selected_track_ids))
+            else:
+                unlike_action = menu.addAction("Удалить из 'Понравившихся'")
+                unlike_action.triggered.connect(
+                    partial(self.remove_selected_from_liked, selected_track_ids))
+        except Exception as e:
+            print(f"Не удалось проверить статус 'Понравившихся': {e}")
 
         menu.exec(self.window.track_table.viewport().mapToGlobal(position))
 
     def add_selected_to_playlist(self, playlist_id, track_ids):
-        self.spotify_client.add_tracks_to_playlist(playlist_id, track_ids)
-        self.window.statusBar().showMessage(f"Треки добавлены в плейлист.", 3000)
+        self.update_status("Добавление треков в плейлист...")
+        self.run_long_task(self.spotify_client.add_tracks_to_playlist, lambda _: self.update_status(
+            "Треки успешно добавлены."), playlist_id, track_ids)
 
     def remove_selected_from_playlist(self, track_ids):
-        self.spotify_client.remove_tracks_from_playlist(
-            self.current_playlist_id, track_ids)
-        self.window.statusBar().showMessage(
-            f"Треки удалены из плейлиста. Обновление...", 3000)
-        # Обновляем вид, чтобы увидеть изменения
-        current_row = self.window.playlist_list.currentRow()
-        self.display_tracks_from_playlist(
-            self.window.playlist_list.item(current_row))
+        self.update_status("Удаление треков из плейлиста...")
+        self.run_long_task(self.spotify_client.remove_tracks_from_playlist,
+                           self.on_playlist_modified, self.current_playlist_id, track_ids)
 
     def add_selected_to_liked(self, track_ids):
-        self.spotify_client.add_tracks_to_liked(track_ids)
-        self.window.statusBar().showMessage("Треки добавлены в 'Понравившиеся'.", 3000)
+        self.update_status("Добавление в 'Понравившиеся'...")
+        self.run_long_task(self.spotify_client.add_tracks_to_liked,
+                           self.on_like_status_changed, track_ids)
 
     def remove_selected_from_liked(self, track_ids):
-        self.spotify_client.remove_tracks_from_liked(track_ids)
-        self.window.statusBar().showMessage("Треки удалены из 'Понравившихся'.", 3000)
+        self.update_status("Удаление из 'Понравившихся'...")
+        self.run_long_task(self.spotify_client.remove_tracks_from_liked,
+                           self.on_like_status_changed, track_ids)
 
 
+# --- Точка входа в приложение ---
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     spotify_app = SpotifyApp()
 
-    cached_token = spotify_app.auth_manager.get_cached_token()
-    if cached_token:
+    if spotify_app.auth_manager.get_cached_token():
         print("Обнаружен кешированный токен, автоматический вход...")
-        # v-- И ИЗМЕНЕНИЕ ЗДЕСЬ --v
-        spotify_app.spotify_client = SpotifyClient(
-            spotify_app.auth_manager.sp_oauth)
-        spotify_app.load_user_playlists()
-        spotify_app.window.login_button.setText("✅ Успешно")
-        spotify_app.window.login_button.setEnabled(False)
+        spotify_app.on_login_success()
 
     spotify_app.window.show()
     sys.exit(app.exec())
