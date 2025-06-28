@@ -8,8 +8,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from functools import partial
 
-from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu
-from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt
+from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox
+from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QTimer
 from PyQt6.QtGui import QCursor
 
 # Импортируем наши классы
@@ -18,6 +18,17 @@ from auth_manager import AuthManager
 from spotify_client import SpotifyClient
 from exporter import export_to_csv, export_to_json, export_to_txt
 from export_dialog import ExportDialog
+from import_dialog import ImportDialog
+from importer import parse_file  # <-- НОВЫЙ ИМПОРТ
+
+# --> ДОБАВЬТЕ ЭТУ ФУНКЦИЮ В НАЧАЛО ФАЙЛА <--
+from itertools import islice
+
+
+def chunks(iterable, size=100):
+    iterator = iter(iterable)
+    while chunk := list(islice(iterator, size)):
+        yield chunk
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
@@ -106,6 +117,9 @@ class SpotifyApp(QObject):
             self.search_and_display_tracks)
         self.window.track_table.customContextMenuRequested.connect(
             self.show_track_context_menu)
+        self.window.import_button.clicked.connect(self.open_import_dialog)
+        self.window.playlist_list.customContextMenuRequested.connect(
+            self.show_playlist_context_menu)
 
     # --- Инфраструктура для многопоточности ---
 
@@ -169,6 +183,7 @@ class SpotifyApp(QObject):
         self.update_status("Успешный вход. Загрузка данных...")
         self.window.login_button.setText("✅ Успешно")
         self.window.login_button.setEnabled(False)
+        self.window.import_button.setEnabled(True)
         self.spotify_client = SpotifyClient(self.auth_manager.sp_oauth)
         self.load_user_playlists()
 
@@ -246,6 +261,108 @@ class SpotifyApp(QObject):
             if exporter_fn:
                 self.run_long_task(exporter_fn, self.on_export_finished, *args)
 
+    # --> НОВЫЙ МЕТОД <--
+    def open_import_dialog(self):
+        """Открывает диалог настроек импорта и запускает процесс."""
+        if not self.spotify_client:
+            return self.update_status("Сначала войдите в Spotify.")
+
+        dialog = ImportDialog(self.playlists, self.window)
+        if dialog.exec():
+            settings = dialog.get_import_settings()
+            if settings:
+                self.update_status(f"Начинаем импорт из файла...")
+                # Запускаем всю тяжелую логику в отдельном потоке
+                self.run_long_task(self._perform_import,
+                                   self.on_import_finished, settings)
+            else:
+                self.update_status(
+                    "Ошибка: не все поля для импорта заполнены.")
+
+    def _perform_import(self, settings: dict) -> str:
+        """
+        Выполняет полный цикл импорта с подробным логированием.
+        """
+        try:
+            # 1. Парсинг файла
+            print("DEBUG: Начинаю парсинг файла...")
+            queries_or_ids = parse_file(settings['filepath'])
+            total_to_find = len(queries_or_ids)
+            print(
+                f"DEBUG: Файл распарсен, найдено {total_to_find} записей для поиска.")
+
+            if total_to_find == 0:
+                return "В файле не найдено записей для импорта."
+
+            # 2. Поиск Spotify ID для каждой записи
+            print("DEBUG: Начинаю поиск Spotify ID для каждой записи...")
+            found_track_ids = []
+            for i, item in enumerate(queries_or_ids):
+                print(
+                    f"DEBUG: Обработка записи {i+1}/{total_to_find}: '{item}'")
+                # Если это уже ID, просто добавляем. Spotify ID обычно 22 символа.
+                if len(item) == 22 and item.isalnum():
+                    print("  - Запись похожа на ID, добавляю напрямую.")
+                    found_track_ids.append(item)
+                else:  # Иначе это поисковый запрос
+                    track_id = self.spotify_client.find_track_id(item)
+                    if track_id:
+                        print(f"  - Найден ID: {track_id}")
+                        found_track_ids.append(track_id)
+                    else:
+                        print(f"  - Трек не найден.")
+
+            print(
+                f"DEBUG: Поиск завершен. Найдено {len(found_track_ids)} Spotify ID.")
+            if not found_track_ids:
+                return "Не найдено ни одного трека для добавления."
+
+            # 3. Создание или выбор целевого плейлиста
+            target_playlist_id = None
+            if settings['mode'] == 'create':
+                playlist_name = settings['target']
+                print(
+                    f"DEBUG: Создаю новый плейлист с названием '{playlist_name}'...")
+                target_playlist_id = self.spotify_client.create_new_playlist(
+                    playlist_name)
+                if not target_playlist_id:
+                    raise Exception(
+                        f"Не удалось создать плейлист '{playlist_name}'")
+                print(f"DEBUG: Плейлист создан, ID: {target_playlist_id}")
+            else:
+                target_playlist_id = settings['target']
+                print(
+                    f"DEBUG: Выбран существующий плейлист с ID: {target_playlist_id}")
+
+            # 4. Добавление треков в плейлист "пачками" по 100
+            print(
+                f"DEBUG: Начинаю добавление {len(found_track_ids)} треков...")
+            for id_chunk in chunks(found_track_ids, 100):
+                print(f"  - Добавляю пачку из {len(id_chunk)} треков...")
+                self.spotify_client.add_tracks_to_playlist(
+                    target_playlist_id, id_chunk)
+                print("  - Пачка успешно добавлена.")
+
+            # 5. Возвращаем отчет об успехе
+            print("DEBUG: Импорт успешно завершен.")
+            return f"Успешно добавлено {len(found_track_ids)} из {total_to_find} треков."
+
+        except Exception as e:
+            # В случае любой ошибки, возвращаем ее текст
+            print(f"---!!! КРИТИЧЕСКАЯ ОШИБКА ВО ВРЕМЯ ИМПОРТА !!!---")
+            # Печатаем полный traceback в консоль для отладки
+            traceback.print_exc()
+            return f"Ошибка: {e}"
+
+    # --> НОВЫЙ СЛОТ-ОБРАБОТЧИК РЕЗУЛЬТАТА ИМПОРТА <--
+    def on_import_finished(self, result_message: str):
+        """Вызывается после завершения импорта."""
+        self.update_status(result_message)
+        # Обновляем список плейлистов в интерфейсе, но делаем это
+        # с небольшой задержкой, чтобы текущий поток успел полностью завершиться.
+        # 100 миллисекунд - безопасная задержка.
+        QTimer.singleShot(100, self.load_user_playlists)
+
     # --- Методы-слоты для обработки результатов ---
 
     def on_playlists_loaded(self, playlists):
@@ -262,6 +379,64 @@ class SpotifyApp(QObject):
     def on_export_finished(self, success):
         self.update_status(
             "Экспорт успешно завершен." if success else "Ошибка во время экспорта.")
+
+    def on_playlist_deleted(self, success):
+        """Слот, вызываемый после попытки удаления плейлиста."""
+        if success:
+            self.update_status("Плейлист успешно удален. Обновление списка...")
+            # Перезагружаем список плейлистов, чтобы он исчез из UI
+            QTimer.singleShot(100, self.load_user_playlists)
+        else:
+            self.update_status("Не удалось удалить плейлист.")
+
+    def show_playlist_context_menu(self, position):
+        """Создает и показывает контекстное меню для списка плейлистов."""
+        item = self.window.playlist_list.itemAt(position)
+        if not item:
+            return
+
+        row = self.window.playlist_list.row(item)
+        playlist = self.playlists[row]
+        playlist_id = playlist['id']
+        playlist_name = playlist['name']
+
+        # Не даем удалять "Понравившиеся треки"
+        if playlist_id == 'liked_songs':
+            return
+
+        menu = QMenu(self.window.playlist_list)
+        delete_action = menu.addAction(f"Удалить плейлист '{playlist_name}'")
+
+        # Используем lambda, чтобы передать нужные аргументы в обработчик
+        delete_action.triggered.connect(
+            lambda: self.confirm_and_delete_playlist(
+                playlist_id, playlist_name)
+        )
+
+        menu.exec(self.window.playlist_list.viewport().mapToGlobal(position))
+
+    def confirm_and_delete_playlist(self, playlist_id, playlist_name):
+        """Показывает диалог подтверждения перед удалением."""
+        confirm_dialog = QMessageBox(self.window)
+        confirm_dialog.setWindowTitle("Подтверждение удаления")
+        confirm_dialog.setText(
+            f"Вы уверены, что хотите удалить плейлист <br><b>{playlist_name}</b>?")
+        confirm_dialog.setInformativeText(
+            "Это действие нельзя будет отменить.")
+        confirm_dialog.setIcon(QMessageBox.Icon.Warning)
+        confirm_dialog.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        confirm_dialog.setDefaultButton(QMessageBox.StandardButton.No)
+
+        reply = confirm_dialog.exec()
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.update_status(f"Удаление плейлиста '{playlist_name}'...")
+            self.run_long_task(
+                self.spotify_client.delete_playlist,
+                self.on_playlist_deleted,
+                playlist_id
+            )
 
     def on_like_status_changed(self, _):
         self.update_status("Статус 'Понравившихся' обновлен.")

@@ -45,7 +45,10 @@ class SpotifyClient:
             return []
         results = self.sp.search(q=query, type='track', limit=limit)
         track_items = results.get('tracks', {}).get('items', [])
-        return self.parse_tracks(track_items)
+        if not track_items:
+            return []
+        # --> ИСПРАВЛЕНИЕ ЗДЕСЬ <--
+        return self._parse_tracks(track_items)
 
     def _parse_tracks(self, track_items: list[dict]) -> list[dict]:
         """Просто извлекает базовые данные о треках."""
@@ -81,3 +84,47 @@ class SpotifyClient:
 
     def remove_tracks_from_liked(self, track_ids: list[str]):
         return self.sp.current_user_saved_tracks_delete(track_ids)
+
+    def find_track_id(self, query: str) -> str | None:
+        """
+        Ищет один трек и возвращает его ID.
+
+        Args:
+            query (str): Поисковый запрос (например, "Artist - Track Name").
+
+        Returns:
+            str | None: Spotify ID первого найденного трека или None.
+        """
+        try:
+            results = self.sp.search(q=query, type='track', limit=1)
+            items = results.get('tracks', {}).get('items', [])
+            if items:
+                return items[0]['id']
+        except Exception as e:
+            print(f"Ошибка при поиске трека '{query}': {e}")
+        return None
+
+    def create_new_playlist(self, name: str) -> str | None:
+        """
+        Создает новый приватный плейлист для текущего пользователя.
+
+        Args:
+            name (str): Название нового плейлиста.
+
+        Returns:
+            str | None: ID нового плейлиста или None в случае ошибки.
+        """
+        try:
+            user_id = self.sp.me()['id']
+            playlist = self.sp.user_playlist_create(
+                user=user_id, name=name, public=False)
+            return playlist['id']
+        except Exception as e:
+            print(f"Ошибка при создании плейлиста '{name}': {e}")
+        return None
+
+    def delete_playlist(self, playlist_id: str):
+        """Отписывается от плейлиста (удаляет его из медиатеки пользователя)."""
+        self.sp.current_user_unfollow_playlist(playlist_id)  # <-- ИСПРАВЛЕНО
+        # Этот метод не возвращает ничего, поэтому мы можем вернуть True в случае успеха
+        return True

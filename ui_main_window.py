@@ -38,10 +38,13 @@ class MainWindow(QMainWindow):
         # --- Верхняя панель с кнопками ---
         button_layout = QHBoxLayout()
         self.login_button = QPushButton("Войти в Spotify")
-        self.export_button = QPushButton("Экспорт в CSV")
+        self.import_button = QPushButton("Импорт из файла")
+        self.export_button = QPushButton("Экспорт в файл")
         self.export_button.setEnabled(False)
+        self.import_button.setEnabled(False)
 
         button_layout.addWidget(self.login_button)
+        button_layout.addWidget(self.import_button)
         button_layout.addWidget(self.export_button)
         button_layout.addStretch()
 
@@ -50,6 +53,9 @@ class MainWindow(QMainWindow):
 
         # --- Левая панель: список плейлистов ---
         self.playlist_list = QListWidget()
+        splitter.addWidget(self.playlist_list)
+        self.playlist_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
         splitter.addWidget(self.playlist_list)
 
         # --> НАЧАЛО НОВОЙ ЛОГИКИ <--
