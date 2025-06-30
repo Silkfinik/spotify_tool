@@ -1,5 +1,3 @@
-# exporter.py
-
 import csv
 import json
 
@@ -18,7 +16,6 @@ def export_to_csv(track_data: list[dict], filename: str, fieldnames: list[str]):
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             for track in track_data:
-                # Отбираем только нужные поля для записи
                 row_to_write = {key: track.get(key, "") for key in fieldnames}
                 writer.writerow(row_to_write)
         print(f"Данные успешно экспортированы в {filename}")

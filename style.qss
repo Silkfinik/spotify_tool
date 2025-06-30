@@ -1,33 +1,42 @@
-/* style.qss */
+/* style.qss (v2 - High Contrast Dark Theme) */
 
-/* Общий стиль для всех виджетов */
+/* Новая палитра:
+    #121212 - Основной фон окна (самый темный)
+    #1E1E1E - Фон для виджетов контента (таблицы, списки)
+    #2A2A2A - Фон для кнопок и полей ввода
+    #535353 - Цвет рамок и разделителей (более заметный)
+    #e8e8e8 - Основной цвет текста
+    #FFFFFF - Яркий текст (для заголовков, акцентов)
+    #1DB954 - Фирменный зеленый Spotify (акцентный)
+*/
+
 QWidget {
-    background-color: #121212; /* Очень темный фон, как в Spotify */
-    color: #E0E0E0; /* Светло-серый текст */
+    background-color: #121212;
+    color: #e8e8e8;
     font-family: "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
     font-size: 10pt;
+    border: none; /* Убираем рамки по умолчанию */
 }
 
-/* Стили для главного окна */
 QMainWindow {
     background-color: #121212;
 }
 
-/* Стили для кнопок */
 QPushButton {
-    background-color: #282828; /* Темно-серый фон кнопки */
+    background-color: #2A2A2A;
     color: #FFFFFF;
-    border: 1px solid #535353;
+    border: 1px solid #535353; /* Более заметная рамка */
     padding: 8px 16px;
-    border-radius: 15px; /* Скругленные углы */
+    border-radius: 15px;
     min-height: 14px;
 }
 QPushButton:hover {
-    background-color: #383838;
+    background-color: #3C3C3C;
+    border-color: #777777;
 }
 QPushButton:pressed {
-    background-color: #1DB954; /* Фирменный зеленый Spotify при нажатии */
-    border: 1px solid #1DB954;
+    background-color: #1DB954;
+    border-color: #1DB954;
 }
 QPushButton:disabled {
     background-color: #1A1A1A;
@@ -35,102 +44,85 @@ QPushButton:disabled {
     border-color: #282828;
 }
 
-/* Стили для полей ввода */
 QLineEdit {
-    background-color: #282828;
+    background-color: #2A2A2A;
     border: 1px solid #535353;
     padding: 6px;
     border-radius: 5px;
+    color: #E0E0E0;
+}
+/* Стиль для текста-подсказки */
+QLineEdit::placeholder {
+    color: #808080;
 }
 
-/* Стили для выпадающих списков */
 QComboBox {
-    background-color: #282828;
+    background-color: #2A2A2A;
     border: 1px solid #535353;
     padding: 6px;
     border-radius: 5px;
 }
 QComboBox::drop-down {
     border: none;
+    padding-right: 5px;
 }
 QComboBox QAbstractItemView {
-    background-color: #282828;
+    background-color: #2A2A2A;
     selection-background-color: #1DB954;
     border: 1px solid #535353;
+    outline: 0px; /* Убираем рамку фокуса */
 }
 
-/* Стили для таблицы */
-QTableWidget {
-    background-color: #181818;
-    border: 1px solid #282828;
-    /* --> ИЗМЕНЕНО: Более светлый и тонкий цвет для сетки <-- */
-    gridline-color: #2A2A2A; 
+/* Стили для таблицы и списка */
+QTableWidget, QListWidget {
+    background-color: #1E1E1E; /* Фон светлее, чем у окна */
+    border: 1px solid #2A2A2A;
+    gridline-color: #2A2A2A; /* Сетка теперь более заметна */
 }
-QTableWidget::item {
-    /* Добавим внутренние отступы для ячеек, чтобы текст не прилипал к краям */
+QTableWidget::item, QListWidget::item {
     padding-left: 5px;
 }
-QTableWidget::item:selected {
+QTableWidget::item:selected, QListWidget::item:selected {
     background-color: #1DB954;
-    color: #121212;
+    color: #FFFFFF;
 }
 
-/* Стили для заголовков (горизонтальных и вертикальных) */
+/* Стили для заголовков */
 QHeaderView::section {
-    background-color: #121212;
+    background-color: #2A2A2A;
     color: #FFFFFF;
     padding: 6px;
-    border: 1px solid #282828;
-    border-bottom: 2px solid #282828; /* Нижняя граница чуть толще */
+    border: none;
+    border-bottom: 1px solid #535353;
     font-weight: bold;
 }
-
-/* --> НОВЫЙ СТИЛЬ: для вертикального заголовка (нумерации строк) <-- */
 QHeaderView::section:vertical {
-    font-weight: normal; /* Убираем жирность для номеров */
-    color: #A0A0A0;      /* Делаем цвет цифр более приглушенным */
-    padding-right: 5px;  /* Отступ справа для цифр */
+    font-weight: normal;
+    color: #e8e8e8;
+    border-bottom: 1px solid #2A2A2A;
 }
-
-/* --> НОВЫЙ СТИЛЬ: для уголка между заголовками <-- */
 QTableCornerButton::section {
-    background-color: #121212;
-    border: 1px solid #282828;
+    background-color: #2A2A2A;
+    border-bottom: 1px solid #535353;
 }
 
-/* Стили для списка плейлистов */
-QListWidget {
-    background-color: #181818;
-    border: 1px solid #282828;
-}
-QListWidget::item {
-    padding: 5px;
-}
-QListWidget::item:selected {
-    background-color: #1DB954;
-    color: #121212;
-    border-radius: 3px;
-}
-
-/* Стили для разделителя */
 QSplitter::handle {
-    background-color: #282828;
+    background-color: #2A2A2A;
 }
 QSplitter::handle:hover {
     background-color: #1DB954;
 }
 
-/* Стили для полос прокрутки */
 QScrollBar:vertical, QScrollBar:horizontal {
     border: none;
-    background: #181818;
-    width: 8px;
-    margin: 0px 0px 0px 0px;
+    background: #1E1E1E;
+    width: 10px;
+    margin: 0px;
 }
 QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
     background: #535353;
     min-height: 20px;
-    border-radius: 4px;
+    border-radius: 5px;
 }
 QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
     background: #1DB954;
@@ -138,11 +130,11 @@ QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
 
 /* Стили для диалоговых окон */
 QDialog {
-    background-color: #181818;
+    background-color: #1E1E1E;
 }
 QGroupBox {
     font-weight: bold;
-    border: 1px solid #282828;
+    border: 1px solid #2A2A2A;
     border-radius: 5px;
     margin-top: 10px;
 }
@@ -150,4 +142,13 @@ QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
     padding: 0 5px;
+}
+
+/* Стиль для всплывающих меню */
+QMenu {
+    background-color: #2A2A2A;
+    border: 1px solid #535353;
+}
+QMenu::item:selected {
+    background-color: #1DB954;
 }

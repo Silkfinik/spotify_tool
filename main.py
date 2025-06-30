@@ -1,5 +1,3 @@
-# main.py
-
 import sys
 import webbrowser
 import threading
@@ -13,7 +11,6 @@ from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, 
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QTimer
 from PyQt6.QtGui import QCursor
 
-# Импортируем наши классы
 from ui_main_window import MainWindow
 from auth_manager import AuthManager
 from spotify_client import SpotifyClient
@@ -106,7 +103,6 @@ class SpotifyApp(QObject):
         self.thread = None
         self.worker = None
 
-        # Подключение сигналов к слотам (методам)
         self.window.login_button.clicked.connect(self.start_login)
         self.code_received_signal.connect(self.process_auth_code)
         self.window.playlist_list.itemClicked.connect(
@@ -122,8 +118,6 @@ class SpotifyApp(QObject):
         self.window.search_bar.returnPressed.connect(
             self.search_and_display_tracks)
 
-    # --- Инфраструктура для многопоточности ---
-
     def run_long_task(self, fn, on_finish, *args, label_text="Выполнение операции..."):
         """Запускает долгую задачу в отдельном потоке и показывает МОДАЛЬНЫЙ диалог прогресса."""
         if self.thread and self.thread.isRunning():
@@ -134,13 +128,10 @@ class SpotifyApp(QObject):
         self.worker = Worker(fn, *args)
         self.worker.moveToThread(self.thread)
 
-        # --> ИЗМЕНЕНИЕ ЗДЕСЬ: Создаем модальный диалог <--
         self.progress_dialog = QProgressDialog(
             label_text, "Отмена", 0, 0, self.window)
-        # Устанавливаем модальность. Это заблокирует основное окно.
         self.progress_dialog.setWindowModality(
             Qt.WindowModality.ApplicationModal)
-        # Показываем, если операция дольше 0.5 сек
         self.progress_dialog.setMinimumDuration(500)
         self.progress_dialog.setWindowTitle("Пожалуйста, подождите")
 
@@ -150,17 +141,14 @@ class SpotifyApp(QObject):
         self.worker.finished.connect(on_finish)
         self.worker.error.connect(self.on_task_error)
 
-        # Сигналы для очистки
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
         self.thread.finished.connect(self.restore_ui)
         self.thread.finished.connect(self.on_thread_finished)
 
-        # Запускаем поток
         self.thread.start()
 
-    # --> НОВЫЙ МЕТОД-СЛОТ <--
     def on_thread_finished(self):
         """Слот, который очищает ссылки на завершенный поток и рабочего."""
         self.thread = None
@@ -169,7 +157,6 @@ class SpotifyApp(QObject):
     def restore_ui(self):
         """Закрывает диалог прогресса. Курсор и окно восстановятся автоматически."""
         if self.progress_dialog:
-            # Закрываем диалог и сбрасываем ссылку на него
             self.progress_dialog.close()
             self.progress_dialog = None
 
@@ -178,24 +165,19 @@ class SpotifyApp(QObject):
         print("Произошла ошибка в рабочем потоке:")
         print(error_info[2])
         self.update_status(f"Ошибка: {error_info[1]}")
-        # Убедимся, что UI восстановится даже при ошибке
         self.restore_ui()
 
     def cancel_task(self):
         """Прерывает выполнение фоновой задачи."""
-        self.update_status("Операция отменена пользователем.")
         if self.thread and self.thread.isRunning():
             self.thread.requestInterruption()
             self.thread.quit()
             self.thread.wait(500)
-        # Восстанавливаем UI после отмены
         self.restore_ui()
 
     def update_status(self, message):
         """Обновляет строку состояния."""
         self.window.statusBar().showMessage(message)
-
-    # --- Методы-инициаторы ---
 
     def start_login(self):
         self.start_callback_server()
@@ -362,8 +344,6 @@ class SpotifyApp(QObject):
         self.run_long_task(self.spotify_client.remove_tracks_from_liked,
                            self.on_like_status_changed, track_ids, label_text="Удаление из 'Понравившихся'...")
 
-    # --- Методы-слоты для обработки результатов ---
-
     def on_playlists_loaded(self, playlists):
         self.playlists = playlists
         self.window.playlist_list.clear()
@@ -396,8 +376,6 @@ class SpotifyApp(QObject):
             QTimer.singleShot(100, self.load_user_playlists)
         else:
             self.update_status("Не удалось удалить плейлист.")
-
-    # --- Основная логика и UI ---
 
     def populate_track_table(self, tracks: list[dict]):
         self.window.track_table.setRowCount(0)
@@ -465,11 +443,9 @@ class SpotifyApp(QObject):
         menu.exec(self.window.playlist_list.viewport().mapToGlobal(position))
 
 
-# --- Точка входа в приложение ---
 if __name__ == '__main__':
     app = QApplication(sys.argv)
 
-    # --> НОВАЯ ЛОГИКА: Загружаем и применяем файл стилей <--
     try:
         with open("style.qss", "r") as f:
             app.setStyleSheet(f.read())

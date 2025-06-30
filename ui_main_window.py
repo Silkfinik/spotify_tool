@@ -1,12 +1,10 @@
-# ui_main_window.py
-
 import sys
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QListWidget, QTableWidget, QPushButton, QHeaderView, QLineEdit
 )
-import qtawesome as qta  # <-- НОВЫЙ ИМПОРТ
+import qtawesome as qta
 
 
 class MainWindow(QMainWindow):
@@ -19,14 +17,12 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(10, 10, 10, 10)  # Добавляем отступы
+        main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
 
-        # --- Верхняя панель с кнопками ---
         button_layout = QHBoxLayout()
         self.login_button = QPushButton("Войти в Spotify")
 
-        # --> ИЗМЕНЕНО: Заменяем кнопки на иконки <--
         self.import_button = QPushButton(
             qta.icon('fa5s.file-import', color='#E0E0E0'), "")
         self.import_button.setToolTip("Импорт из файла...")
@@ -38,20 +34,16 @@ class MainWindow(QMainWindow):
         self.export_button.setEnabled(False)
 
         button_layout.addWidget(self.login_button)
-        button_layout.addStretch()  # Растягиваем пространство между кнопками
+        button_layout.addStretch()
         button_layout.addWidget(self.import_button)
         button_layout.addWidget(self.export_button)
 
-        # --- Разделитель ---
         splitter = QSplitter()
-
-        # --- Левая панель ---
         self.playlist_list = QListWidget()
         self.playlist_list.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu)
         splitter.addWidget(self.playlist_list)
 
-        # --- Правая панель ---
         right_panel_widget = QWidget()
         right_panel_layout = QVBoxLayout(right_panel_widget)
         right_panel_layout.setContentsMargins(0, 0, 0, 0)
@@ -76,30 +68,22 @@ class MainWindow(QMainWindow):
         self.track_table.setHorizontalHeaderLabels(
             ["Название", "Исполнитель", "Альбом"])
 
-        # 1. Убираем сортировку по колонкам
         self.track_table.setSortingEnabled(False)
 
-        # 2. Делаем ячейки таблицы нередактируемыми
         self.track_table.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers)
 
-        # 2. Включаем отображение сетки
         self.track_table.setShowGrid(True)
 
-        # 3. Включаем нумерацию строк (вертикальный заголовок)
         self.track_table.verticalHeader().setVisible(True)
 
         header = self.track_table.horizontalHeader()
 
-        # 4. Устанавливаем режим интерактивного изменения ширины для всех колонок
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
-        # 5. Устанавливаем начальную ширину для первых двух колонок
-        self.track_table.setColumnWidth(0, 350)  # Название
-        self.track_table.setColumnWidth(1, 250)  # Исполнитель
+        self.track_table.setColumnWidth(0, 350)
+        self.track_table.setColumnWidth(1, 250)
 
-        # 6. Указываем, что последняя колонка ("Альбом") должна растягиваться,
-        # чтобы занимать все оставшееся свободное место
         header.setStretchLastSection(True)
 
         right_panel_layout.addWidget(self.track_table)

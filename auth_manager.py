@@ -1,5 +1,3 @@
-# Модуль для управления авторизацией Spotify
-
 import os
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -27,7 +25,6 @@ class AuthManager:
             raise ValueError("Ошибка: Установите переменные окружения SPOTIPY_CLIENT_ID, "
                              "SPOTIPY_CLIENT_SECRET, и SPOTIPY_REDIRECT_URI в файле .env")
 
-        # auth_manager.py, внутри __init__
         scope = (
             "user-read-private user-read-email "
             "playlist-read-private "

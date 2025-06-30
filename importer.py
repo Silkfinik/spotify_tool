@@ -1,5 +1,3 @@
-# importer.py
-
 import os
 import csv
 import json
@@ -10,10 +8,8 @@ def _find_header_mappings(headers: list[str]) -> dict:
     """
     Находит соответствие между стандартными именами полей и реальными заголовками в файле.
     """
-    # Приводим все заголовки к нижнему регистру для надежного сравнения
     headers_lower = [h.lower() for h in headers]
 
-    # Определяем возможные псевдонимы для каждого поля
     ALIASES = {
         'id': ['track_id', 'id', 'trackid'],
         'uri': ['uri', 'track_uri'],
@@ -25,10 +21,9 @@ def _find_header_mappings(headers: list[str]) -> dict:
     for canonical_name, alias_list in ALIASES.items():
         for alias in alias_list:
             if alias in headers_lower:
-                # Нашли совпадение, сохраняем реальное имя заголовка
                 original_header_index = headers_lower.index(alias)
                 mappings[canonical_name] = headers[original_header_index]
-                break  # Переходим к следующему каноническому имени
+                break
 
     print(f"Обнаружены следующие сопоставления колонок: {mappings}")
     return mappings
@@ -59,7 +54,6 @@ def parse_csv(filepath: str) -> list[str]:
             mappings = _find_header_mappings(reader.fieldnames)
 
             for row in reader:
-                # Приоритет: URI > ID > Название + Артист
                 if 'uri' in mappings and row.get(mappings['uri']):
                     track_id = os.path.basename(
                         unquote(urlparse(row[mappings['uri']]).path))
