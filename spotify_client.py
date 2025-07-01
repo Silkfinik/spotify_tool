@@ -1,5 +1,3 @@
-# spotify_client.py
-
 import spotipy
 
 
@@ -50,7 +48,6 @@ class SpotifyClient:
         track_items = results.get('tracks', {}).get('items', [])
         if not track_items:
             return []
-        # --> ИСПРАВЛЕНИЕ ЗДЕСЬ <--
         return self._parse_tracks(track_items)
 
     def _parse_tracks(self, track_items: list[dict]) -> list[dict]:
@@ -71,7 +68,6 @@ class SpotifyClient:
             })
         return tracks_data
 
-    # Тут должны быть только базовые методы управления, без аудио-фич
     def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str]):
         return self.sp.playlist_add_items(playlist_id, track_ids)
 
@@ -128,6 +124,5 @@ class SpotifyClient:
 
     def delete_playlist(self, playlist_id: str):
         """Отписывается от плейлиста (удаляет его из медиатеки пользователя)."""
-        self.sp.current_user_unfollow_playlist(playlist_id)  # <-- ИСПРАВЛЕНО
-        # Этот метод не возвращает ничего, поэтому мы можем вернуть True в случае успеха
+        self.sp.current_user_unfollow_playlist(playlist_id)
         return True

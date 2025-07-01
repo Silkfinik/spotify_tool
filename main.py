@@ -1,4 +1,5 @@
 import sys
+import os
 import webbrowser
 import threading
 import traceback
@@ -18,6 +19,7 @@ from exporter import export_to_csv, export_to_json, export_to_txt
 from export_dialog import ExportDialog
 from import_dialog import ImportDialog
 from importer import parse_file
+from paste_text_dialog import PasteTextDialog
 
 
 def chunks(iterable, size=100):
@@ -113,17 +115,29 @@ class SpotifyApp(QObject):
             self.show_track_context_menu)
         self.window.export_button.clicked.connect(self.export_tracks)
         self.window.import_button.clicked.connect(self.open_import_dialog)
+        self.window.paste_text_button.clicked.connect(
+            self.open_paste_text_dialog)
         self.window.search_button.clicked.connect(
             self.search_and_display_tracks)
         self.window.search_bar.returnPressed.connect(
             self.search_and_display_tracks)
 
     def run_long_task(self, fn, on_finish, *args, label_text="Выполнение операции..."):
-        """Запускает долгую задачу в отдельном потоке и показывает МОДАЛЬНЫЙ диалог прогресса."""
+        """
+        Запускает долгую задачу. Если другая задача уже выполняется,
+        прерывает ее и запускает новую после небольшой задержки.
+        """
+        # 1. Если поток уже запущен, прерываем его
         if self.thread and self.thread.isRunning():
-            self.update_status("Предыдущая операция еще не завершена.")
+            # Прерываем "тихо", без сообщения в статус-баре
+            self.cancel_task(silent=True)
+            # Используем таймер, чтобы дать старому потоку время на полную остановку
+            # перед запуском нового. Это самый надежный способ.
+            QTimer.singleShot(100, lambda: self.run_long_task(
+                fn, on_finish, *args, label_text=label_text))
             return
 
+        # 2. Этот код выполнится либо сразу, либо после задержки таймера
         self.thread = QThread()
         self.worker = Worker(fn, *args)
         self.worker.moveToThread(self.thread)
@@ -134,7 +148,6 @@ class SpotifyApp(QObject):
             Qt.WindowModality.ApplicationModal)
         self.progress_dialog.setMinimumDuration(500)
         self.progress_dialog.setWindowTitle("Пожалуйста, подождите")
-
         self.progress_dialog.canceled.connect(self.cancel_task)
 
         self.thread.started.connect(self.worker.run)
@@ -148,6 +161,24 @@ class SpotifyApp(QObject):
         self.thread.finished.connect(self.on_thread_finished)
 
         self.thread.start()
+
+    def cancel_task(self, silent: bool = False):
+        """
+        Прерывает выполнение фоновой задачи.
+
+        Args:
+            silent (bool): Если True, не показывать сообщение в строке состояния.
+        """
+        if self.thread and self.thread.isRunning():
+            if not silent:
+                self.update_status("Операция отменена пользователем.")
+
+            # Запрашиваем прерывание и завершение потока
+            self.thread.requestInterruption()
+            self.thread.quit()
+        else:
+            # Если потока нет, на всякий случай просто восстанавливаем UI
+            self.restore_ui()
 
     def on_thread_finished(self):
         """Слот, который очищает ссылки на завершенный поток и рабочего."""
@@ -165,14 +196,6 @@ class SpotifyApp(QObject):
         print("Произошла ошибка в рабочем потоке:")
         print(error_info[2])
         self.update_status(f"Ошибка: {error_info[1]}")
-        self.restore_ui()
-
-    def cancel_task(self):
-        """Прерывает выполнение фоновой задачи."""
-        if self.thread and self.thread.isRunning():
-            self.thread.requestInterruption()
-            self.thread.quit()
-            self.thread.wait(500)
         self.restore_ui()
 
     def update_status(self, message):
@@ -210,6 +233,7 @@ class SpotifyApp(QObject):
         self.window.login_button.setText("✅ Успешно")
         self.window.login_button.setEnabled(False)
         self.window.import_button.setEnabled(True)
+        self.window.paste_text_button.setEnabled(True)
         self.spotify_client = SpotifyClient(self.auth_manager.sp_oauth)
         self.load_user_playlists()
 
@@ -258,9 +282,11 @@ class SpotifyApp(QObject):
         } for row in range(self.window.track_table.rowCount())]
         file_extensions = {
             "csv": "CSV Files (*.csv)", "json": "JSON Files (*.json)", "txt": "Text Files (*.txt)"}
-        default_filename = f"{self.current_playlist_name}.{settings['format']}"
+        default_filename = os.path.join(
+            'data', f"{self.current_playlist_name}.{settings['format']}")
         filename, _ = QFileDialog.getSaveFileName(
-            self.window, "Сохранить как...", default_filename, file_extensions[settings['format']])
+            self.window, "Сохранить как...", default_filename, file_extensions[settings['format']]
+        )
         if filename:
             exporter_fn, args = None, ()
             if settings['format'] == 'csv':
@@ -275,15 +301,61 @@ class SpotifyApp(QObject):
                 self.run_long_task(exporter_fn, self.on_export_finished, *args,
                                    label_text=f"Экспорт в {settings['format'].upper()}...")
 
+    # main.py, внутри класса SpotifyApp
+
     def open_import_dialog(self):
+        """Открывает диалог для выбора файла с диска и запускает импорт."""
         if not self.spotify_client:
             return self.update_status("Сначала войдите в Spotify.")
+
+        # 1. Сначала выбираем файл
+        filepath, _ = QFileDialog.getOpenFileName(
+            self.window,
+            "Выберите файл для импорта",
+            "data",  # Начальная директория
+            "CSV и JSON файлы (*.csv *.json)"
+        )
+
+        # Если файл был выбран, переходим к следующему шагу
+        if filepath:
+            self._show_import_playlist_options(filepath)
+
+    def open_paste_text_dialog(self):
+        """Открывает диалог для вставки текста и запускает импорт."""
+        if not self.spotify_client:
+            return self.update_status("Сначала войдите в Spotify.")
+
+        paste_dialog = PasteTextDialog(self.window)
+        if paste_dialog.exec():
+            # Если пользователь вставил текст и сохранил временный CSV
+            csv_filepath = paste_dialog.get_csv_filepath()
+            if csv_filepath:
+                # Переходим к тому же самому шагу, что и при импорте из файла
+                self._show_import_playlist_options(csv_filepath)
+
+    def _show_import_playlist_options(self, filepath: str):
+        """
+        Принимает путь к файлу и открывает диалог для выбора плейлиста.
+        """
+        import os
         dialog = ImportDialog(self.playlists, self.window)
+
+        # ВАЖНО: Мы программно устанавливаем путь к файлу и делаем поле нередактируемым.
+        # Пользователю больше не нужно выбирать файл во второй раз.
+        dialog.filepath_edit.setText(filepath)
+        dialog.filepath_edit.setReadOnly(True)
+        dialog.browse_button.setEnabled(False)
+
         if dialog.exec():
             settings = dialog.get_import_settings()
             if settings:
-                self.run_long_task(self._perform_import, self.on_import_finished,
-                                   settings, label_text="Импорт треков из файла...")
+                # get_import_settings() возьмет путь из QLineEdit, который мы уже заполнили
+                self.run_long_task(
+                    self._perform_import,
+                    self.on_import_finished,
+                    settings,
+                    label_text=f"Импорт из {os.path.basename(filepath)}..."
+                )
             else:
                 self.update_status(
                     "Ошибка: не все поля для импорта заполнены.")
@@ -444,6 +516,8 @@ class SpotifyApp(QObject):
 
 
 if __name__ == '__main__':
+
+    os.makedirs('data', exist_ok=True)
     app = QApplication(sys.argv)
 
     try:

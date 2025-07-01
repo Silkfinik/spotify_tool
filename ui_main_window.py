@@ -28,6 +28,11 @@ class MainWindow(QMainWindow):
         self.import_button.setToolTip("Импорт из файла...")
         self.import_button.setEnabled(False)
 
+        self.paste_text_button = QPushButton(
+            qta.icon('fa5s.paste', color='#E0E0E0'), "")
+        self.paste_text_button.setToolTip("Импорт из текста...")
+        self.paste_text_button.setEnabled(False)
+
         self.export_button = QPushButton(
             qta.icon('fa5s.file-csv', color='#E0E0E0'), "")
         self.export_button.setToolTip("Экспорт в файл...")
@@ -36,6 +41,7 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.login_button)
         button_layout.addStretch()
         button_layout.addWidget(self.import_button)
+        button_layout.addWidget(self.paste_text_button)
         button_layout.addWidget(self.export_button)
 
         splitter = QSplitter()
