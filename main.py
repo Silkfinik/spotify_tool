@@ -7,10 +7,13 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from functools import partial
 from itertools import islice
+import qtawesome as qta
 
 from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QTimer
 from PyQt6.QtGui import QCursor
+from PyQt6.QtWidgets import QProgressBar, QPushButton
+from PyQt6.QtWidgets import QProgressDialog
 
 from ui_main_window import MainWindow
 from auth_manager import AuthManager
@@ -59,10 +62,11 @@ class CallbackHandler(BaseHTTPRequestHandler):
 
 class Worker(QObject):
     """
-    Универсальный 'рабочий' для выполнения задач в отдельном потоке.
+    Универсальный 'рабочий' с сигналами прогресса.
     """
     finished = pyqtSignal(object)
     error = pyqtSignal(tuple)
+    progress = pyqtSignal(int, int)  # <-- НОВЫЙ СИГНАЛ (текущий, всего)
 
     def __init__(self, fn, *args, **kwargs):
         super().__init__()
@@ -71,10 +75,20 @@ class Worker(QObject):
         self.kwargs = kwargs
 
     def run(self):
-        """Выполняет задачу."""
+        """Выполняет задачу, передавая в нее колбэки для прогресса и отмены."""
         try:
+            thread = QThread.currentThread()
+
+            def cancellation_checker():
+                return thread.isInterruptionRequested()
+
+            # Передаем и проверку отмены, и репортер прогресса
+            self.kwargs['cancellation_check'] = cancellation_checker
+            self.kwargs['progress_callback'] = self.progress.emit
+
             result = self.fn(*self.args, **self.kwargs)
-            self.finished.emit(result)
+            if not thread.isInterruptionRequested():
+                self.finished.emit(result)
         except Exception:
             self.error.emit((sys.exc_info()[0], sys.exc_info()[
                             1], traceback.format_exc()))
@@ -101,10 +115,28 @@ class SpotifyApp(QObject):
         self.current_playlist_name = ""
         self.is_playlist_view = False
 
-        self.progress_dialog = None
         self.thread = None
         self.worker = None
 
+        # --> НОВОЕ: Создаем виджеты для строки состояния заранее <--
+        self.status_progress_bar = QProgressBar()
+        self.status_progress_bar.setMaximumSize(200, 15)
+        # --> ИЗМЕНЕНИЕ: Включаем отображение текста <--
+        self.status_progress_bar.setTextVisible(True)
+        # --> ДОБАВЛЕНО: Указываем, что в тексте должен быть процент <--
+        self.status_progress_bar.setFormat("%p%")
+        self.status_progress_bar.hide()
+
+        self.status_cancel_button = QPushButton(
+            qta.icon('fa5s.times-circle', color='#E0E0E0'), " Отмена")
+        self.status_cancel_button.setStyleSheet(
+            "padding: 2px 5px; border-radius: 5px; background-color: #535353;")
+        # --> ДОБАВЛЕНО: Устанавливаем уникальное имя объекта для QSS <--
+        self.status_cancel_button.setObjectName("StatusBarCancelButton")
+        self.status_cancel_button.hide()
+        self.status_cancel_button.clicked.connect(self.cancel_task)
+
+        # Подключение сигналов к слотам (методам)
         self.window.login_button.clicked.connect(self.start_login)
         self.code_received_signal.connect(self.process_auth_code)
         self.window.playlist_list.itemClicked.connect(
@@ -122,38 +154,46 @@ class SpotifyApp(QObject):
         self.window.search_bar.returnPressed.connect(
             self.search_and_display_tracks)
 
+    # --- Обновленная инфраструктура для многопоточности ---
+
     def run_long_task(self, fn, on_finish, *args, label_text="Выполнение операции..."):
-        """
-        Запускает долгую задачу. Если другая задача уже выполняется,
-        прерывает ее и запускает новую после небольшой задержки.
-        """
-        # 1. Если поток уже запущен, прерываем его
+        """Запускает долгую задачу и показывает прогресс-бар в строке состояния."""
         if self.thread and self.thread.isRunning():
-            # Прерываем "тихо", без сообщения в статус-баре
             self.cancel_task(silent=True)
-            # Используем таймер, чтобы дать старому потоку время на полную остановку
-            # перед запуском нового. Это самый надежный способ.
             QTimer.singleShot(100, lambda: self.run_long_task(
                 fn, on_finish, *args, label_text=label_text))
             return
 
-        # 2. Этот код выполнится либо сразу, либо после задержки таймера
+        # 1. Показываем текстовое сообщение слева
+        # Сообщение будет постоянным на время операции
+        self.update_status(label_text, timeout=0)
+
+        # 2. Настраиваем и показываем виджеты справа
+        # Устанавливаем диапазон для процентов
+        self.status_progress_bar.setRange(0, 100)
+        self.status_progress_bar.setValue(0)      # Начинаем с 0%
+        self.window.statusBar().addPermanentWidget(self.status_progress_bar)
+        self.window.statusBar().addPermanentWidget(self.status_cancel_button)
+        self.status_progress_bar.show()
+        self.status_cancel_button.show()
+
+        # 3. Блокируем центральный виджет
+        self.window.centralWidget().setEnabled(False)
+        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+
+        # 4. Создаем и запускаем поток
         self.thread = QThread()
         self.worker = Worker(fn, *args)
         self.worker.moveToThread(self.thread)
 
-        self.progress_dialog = QProgressDialog(
-            label_text, "Отмена", 0, 0, self.window)
-        self.progress_dialog.setWindowModality(
-            Qt.WindowModality.ApplicationModal)
-        self.progress_dialog.setMinimumDuration(500)
-        self.progress_dialog.setWindowTitle("Пожалуйста, подождите")
-        self.progress_dialog.canceled.connect(self.cancel_task)
-
+        # Подключаем все сигналы, включая новый сигнал прогресса
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(on_finish)
         self.worker.error.connect(self.on_task_error)
+        # <--- Ключевое подключение
+        self.worker.progress.connect(self.update_progress)
 
+        # Очистка
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
@@ -162,45 +202,51 @@ class SpotifyApp(QObject):
 
         self.thread.start()
 
-    def cancel_task(self, silent: bool = False):
-        """
-        Прерывает выполнение фоновой задачи.
+    def restore_ui(self):
+        """Восстанавливает интерфейс, убирая виджеты из строки состояния."""
+        self.window.centralWidget().setEnabled(True)
+        QApplication.restoreOverrideCursor()
 
-        Args:
-            silent (bool): Если True, не показывать сообщение в строке состояния.
-        """
-        if self.thread and self.thread.isRunning():
-            if not silent:
-                self.update_status("Операция отменена пользователем.")
+        self.status_progress_bar.hide()
+        self.status_cancel_button.hide()
+        self.window.statusBar().removeWidget(self.status_progress_bar)
+        self.window.statusBar().removeWidget(self.status_cancel_button)
 
-            # Запрашиваем прерывание и завершение потока
-            self.thread.requestInterruption()
-            self.thread.quit()
-        else:
-            # Если потока нет, на всякий случай просто восстанавливаем UI
-            self.restore_ui()
+        # Очищаем сообщение в строке состояния
+        self.update_status("Готово.", timeout=2000)
+
+    def update_progress(self, current_value, max_value):
+        """Слот для обновления прогресс-бара в строке состояния."""
+        if max_value > 0:
+            percent = int((current_value / max_value) * 100)
+            self.status_progress_bar.setValue(percent)
 
     def on_thread_finished(self):
-        """Слот, который очищает ссылки на завершенный поток и рабочего."""
         self.thread = None
         self.worker = None
 
-    def restore_ui(self):
-        """Закрывает диалог прогресса. Курсор и окно восстановятся автоматически."""
-        if self.progress_dialog:
-            self.progress_dialog.close()
-            self.progress_dialog = None
-
     def on_task_error(self, error_info):
-        """Обрабатывает ошибку из потока."""
         print("Произошла ошибка в рабочем потоке:")
         print(error_info[2])
         self.update_status(f"Ошибка: {error_info[1]}")
         self.restore_ui()
 
-    def update_status(self, message):
-        """Обновляет строку состояния."""
-        self.window.statusBar().showMessage(message)
+    def cancel_task(self, silent: bool = False):
+        if not silent:
+            self.update_status("Операция отменена пользователем.")
+
+        if self.thread and self.thread.isRunning():
+            self.thread.requestInterruption()
+            self.thread.quit()
+        else:
+            self.restore_ui()
+
+    def update_status(self, message: str, timeout: int = 4000):
+        """
+        Обновляет строку состояния. Сообщение исчезнет через указанное время.
+        Если timeout = 0, сообщение будет постоянным.
+        """
+        self.window.statusBar().showMessage(message, timeout)
 
     def start_login(self):
         self.start_callback_server()
@@ -360,35 +406,63 @@ class SpotifyApp(QObject):
                 self.update_status(
                     "Ошибка: не все поля для импорта заполнены.")
 
-    def _perform_import(self, settings: dict) -> str:
+    def _perform_import(self, settings: dict, cancellation_check=None, progress_callback=None, **kwargs) -> str:
+        """
+        Выполняет полный цикл импорта: парсинг, поиск ID, создание/выбор плейлиста и добавление треков.
+        Этот метод предназначен для выполнения в Worker'е.
+        """
         try:
+            # 1. Парсинг файла
             queries_or_ids = parse_file(settings['filepath'])
             total_to_find = len(queries_or_ids)
             if total_to_find == 0:
                 return "В файле не найдено записей для импорта."
-            found_track_ids = [item for item in queries_or_ids if len(
-                item) == 22 and item.isalnum()]
-            queries_to_search = [
-                item for item in queries_or_ids if item not in found_track_ids]
-            for query in queries_to_search:
-                track_id = self.spotify_client.find_track_id(query)
-                if track_id:
-                    found_track_ids.append(track_id)
+
+            # 2. Поиск Spotify ID для каждой записи
+            found_track_ids = []
+            for i, item in enumerate(queries_or_ids):
+                # Проверяем, не была ли нажата кнопка "Отмена"
+                if cancellation_check and cancellation_check():
+                    return "Импорт отменен пользователем."
+
+                # Сообщаем о прогрессе поиска (шаг, всего шагов)
+                if progress_callback:
+                    progress_callback(i + 1, total_to_find)
+
+                if len(item) == 22 and item.isalnum():
+                    found_track_ids.append(item)
+                else:
+                    track_id = self.spotify_client.find_track_id(query=item)
+                    if track_id:
+                        found_track_ids.append(track_id)
+
             if not found_track_ids:
                 return "Не найдено ни одного трека для добавления."
+
+            if cancellation_check and cancellation_check():
+                return "Импорт отменен пользователем."
+
+            # 3. Создание или выбор целевого плейлиста
+            target_playlist_id = None
             if settings['mode'] == 'create':
                 playlist_name = settings['target']
                 target_playlist_id = self.spotify_client.create_new_playlist(
-                    playlist_name)
+                    name=playlist_name)
                 if not target_playlist_id:
                     raise Exception(
                         f"Не удалось создать плейлист '{playlist_name}'")
             else:
                 target_playlist_id = settings['target']
+
+            # 4. Добавление треков в плейлист "пачками" по 100
             for id_chunk in chunks(found_track_ids, 100):
+                if cancellation_check and cancellation_check():
+                    return "Импорт отменен пользователем."
                 self.spotify_client.add_tracks_to_playlist(
-                    target_playlist_id, id_chunk)
+                    playlist_id=target_playlist_id, track_ids=id_chunk)
+
             return f"Успешно добавлено {len(found_track_ids)} из {total_to_find} треков."
+
         except Exception as e:
             traceback.print_exc()
             return f"Ошибка: {e}"

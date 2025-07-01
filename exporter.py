@@ -1,16 +1,10 @@
+# exporter.py
+
 import csv
 import json
 
 
-def export_to_csv(track_data: list[dict], filename: str, fieldnames: list[str]):
-    """
-    Экспортирует данные о треках в CSV-файл из списка словарей.
-
-    Args:
-        track_data (list[dict]): Список словарей с данными о треках.
-        filename (str): Путь к файлу для сохранения.
-        fieldnames (list[str]): Список ключей для экспорта (колонки).
-    """
+def export_to_csv(track_data: list[dict], filename: str, fieldnames: list[str], **kwargs):
     try:
         with open(filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -25,14 +19,7 @@ def export_to_csv(track_data: list[dict], filename: str, fieldnames: list[str]):
         return False
 
 
-def export_to_json(track_data: list[dict], filename: str):
-    """
-    Экспортирует данные о треках в JSON-файл.
-
-    Args:
-        track_data (list[dict]): Список словарей с данными о треках.
-        filename (str): Путь к файлу для сохранения.
-    """
+def export_to_json(track_data: list[dict], filename: str, **kwargs):
     try:
         with open(filename, 'w', encoding='utf-8') as jsonfile:
             json.dump(track_data, jsonfile, ensure_ascii=False, indent=4)
@@ -43,15 +30,7 @@ def export_to_json(track_data: list[dict], filename: str):
         return False
 
 
-def export_to_txt(track_data: list[dict], filename: str, template_string: str):
-    """
-    Экспортирует данные о треках в текстовый файл по шаблону.
-
-    Args:
-        track_data (list[dict]): Список словарей с данными о треках.
-        filename (str): Путь к файлу для сохранения.
-        template_string (str): Строка-шаблон (например, "{artist} - {name}").
-    """
+def export_to_txt(track_data: list[dict], filename: str, template_string: str, **kwargs):
     try:
         with open(filename, 'w', encoding='utf-8') as txtfile:
             for track in track_data:

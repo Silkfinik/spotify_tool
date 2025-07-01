@@ -152,3 +152,36 @@ QMenu {
 QMenu::item:selected {
     background-color: #1DB954;
 }
+
+/* Стиль для самого прогресс-бара */
+QProgressBar {
+    border: 1px solid #535353;
+    border-radius: 7px;
+    background-color: #2A2A2A;
+    text-align: center; /* Центрируем текст с процентами */
+    color: #FFFFFF;
+}
+
+/* Стиль для заполненной части прогресс-бара */
+QProgressBar::chunk {
+    background-color: #1DB954; /* Зеленый цвет Spotify */
+    border-radius: 6px;
+}
+
+/* Стиль для кнопки отмены в строке состояния */
+/* Чтобы стилизовать ее отдельно, мы дадим ей имя в main.py */
+QPushButton#StatusBarCancelButton {
+    background-color: #535353;
+    color: #E0E0E0;
+    border: none;
+    padding: 4px 8px;
+    border-radius: 7px;
+    min-height: 12px; /* Уменьшаем высоту */
+}
+QPushButton#StatusBarCancelButton:hover {
+    background-color: #D32F2F; /* Красный при наведении для действия "отмена" */
+    color: #FFFFFF;
+}
+QPushButton#StatusBarCancelButton:pressed {
+    background-color: #B71C1C; /* Более темный красный при нажатии */
+}
