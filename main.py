@@ -129,8 +129,6 @@ class SpotifyApp(QObject):
 
         self.status_cancel_button = QPushButton(
             qta.icon('fa5s.times-circle', color='#E0E0E0'), " Отмена")
-        self.status_cancel_button.setStyleSheet(
-            "padding: 2px 5px; border-radius: 5px; background-color: #535353;")
         # --> ДОБАВЛЕНО: Устанавливаем уникальное имя объекта для QSS <--
         self.status_cancel_button.setObjectName("StatusBarCancelButton")
         self.status_cancel_button.hide()
