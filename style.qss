@@ -185,3 +185,11 @@ QPushButton#StatusBarCancelButton:hover {
 QPushButton#StatusBarCancelButton:pressed {
     background-color: #B71C1C; /* Более темный красный при нажатии */
 }
+
+/* style.qss */
+
+/* === Стиль для оверлея === */
+QFrame#Overlay {
+    /* Полупрозрачный темно-серый фон */
+    background-color: rgba(18, 18, 18, 0.7); 
+}

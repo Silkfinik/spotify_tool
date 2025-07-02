@@ -157,40 +157,36 @@ class SpotifyApp(QObject):
     # --- Обновленная инфраструктура для многопоточности ---
 
     def run_long_task(self, fn, on_finish, *args, label_text="Выполнение операции..."):
-        """Запускает долгую задачу и показывает прогресс-бар в строке состояния."""
+        """Запускает долгую задачу, показывая оверлей и индикатор в строке состояния."""
         if self.thread and self.thread.isRunning():
             self.cancel_task(silent=True)
             QTimer.singleShot(100, lambda: self.run_long_task(
                 fn, on_finish, *args, label_text=label_text))
             return
 
-        # 1. Показываем текстовое сообщение слева
-        # Сообщение будет постоянным на время операции
+        # Показываем виджеты в строке состояния
         self.update_status(label_text, timeout=0)
-
-        # 2. Настраиваем и показываем виджеты справа
-        # Устанавливаем диапазон для процентов
         self.status_progress_bar.setRange(0, 100)
-        self.status_progress_bar.setValue(0)      # Начинаем с 0%
+        self.status_progress_bar.setValue(0)
         self.window.statusBar().addPermanentWidget(self.status_progress_bar)
         self.window.statusBar().addPermanentWidget(self.status_cancel_button)
         self.status_progress_bar.show()
         self.status_cancel_button.show()
 
-        # 3. Блокируем центральный виджет
-        self.window.centralWidget().setEnabled(False)
-        QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        # --> ИЗМЕНЕНИЕ: Управляем оверлеем вручную <--
+        self.window.overlay.setGeometry(self.window.centralWidget().rect())
+        self.window.overlay.setCursor(QCursor(Qt.CursorShape.WaitCursor))
+        self.window.overlay.show()
+        self.window.overlay.raise_()
 
-        # 4. Создаем и запускаем поток
+        # Создаем и запускаем поток
         self.thread = QThread()
         self.worker = Worker(fn, *args)
         self.worker.moveToThread(self.thread)
 
-        # Подключаем все сигналы, включая новый сигнал прогресса
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(on_finish)
         self.worker.error.connect(self.on_task_error)
-        # <--- Ключевое подключение
         self.worker.progress.connect(self.update_progress)
 
         # Очистка
@@ -203,14 +199,16 @@ class SpotifyApp(QObject):
         self.thread.start()
 
     def restore_ui(self):
-        """Восстанавливает интерфейс, убирая виджеты из строки состояния."""
-        self.window.centralWidget().setEnabled(True)
-        QApplication.restoreOverrideCursor()
+        """Восстанавливает интерфейс, скрывая оверлей и виджеты."""
+        # --> ИЗМЕНЕНИЕ: Скрываем оверлей и сбрасываем его курсор <--
+        self.window.overlay.hide()
+        self.window.overlay.unsetCursor()
 
         self.status_progress_bar.hide()
         self.status_cancel_button.hide()
         self.window.statusBar().removeWidget(self.status_progress_bar)
         self.window.statusBar().removeWidget(self.status_cancel_button)
+        self.update_status("Готово.", timeout=2000)
 
         # Очищаем сообщение в строке состояния
         self.update_status("Готово.", timeout=2000)
