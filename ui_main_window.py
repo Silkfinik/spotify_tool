@@ -28,6 +28,11 @@ class MainWindow(QMainWindow):
         # --- Верхняя панель с кнопками ---
         button_layout = QHBoxLayout()
         self.login_button = QPushButton("Войти в Spotify")
+        # --> НОВАЯ КНОПКА <--
+        self.refresh_button = QPushButton(
+            qta.icon('fa5s.sync-alt', color='#E0E0E0'), "")
+        self.refresh_button.setToolTip("Обновить список плейлистов")
+        self.refresh_button.setEnabled(False)  # Будет неактивна до входа
         self.import_button = QPushButton(
             qta.icon('fa5s.file-import', color='#E0E0E0'), "")
         self.import_button.setToolTip("Импорт из файла...")
@@ -41,6 +46,7 @@ class MainWindow(QMainWindow):
         self.export_button.setToolTip("Экспорт в файл...")
         self.export_button.setEnabled(False)
         button_layout.addWidget(self.login_button)
+        button_layout.addWidget(self.refresh_button)
         button_layout.addStretch()
         button_layout.addWidget(self.import_button)
         button_layout.addWidget(self.paste_text_button)

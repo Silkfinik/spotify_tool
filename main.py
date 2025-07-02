@@ -136,6 +136,8 @@ class SpotifyApp(QObject):
 
         # Подключение сигналов к слотам (методам)
         self.window.login_button.clicked.connect(self.start_login)
+        self.window.refresh_button.clicked.connect(self.load_user_playlists)
+        self.code_received_signal.connect(self.process_auth_code)
         self.code_received_signal.connect(self.process_auth_code)
         self.window.playlist_list.itemClicked.connect(
             self.display_tracks_from_playlist)
@@ -274,6 +276,7 @@ class SpotifyApp(QObject):
         self.update_status("Успешный вход. Загрузка данных...")
         self.window.login_button.setText("✅ Успешно")
         self.window.login_button.setEnabled(False)
+        self.window.refresh_button.setEnabled(True)
         self.window.import_button.setEnabled(True)
         self.window.paste_text_button.setEnabled(True)
         self.spotify_client = SpotifyClient(self.auth_manager.sp_oauth)
@@ -766,6 +769,7 @@ if __name__ == '__main__':
 
     if spotify_app.auth_manager.get_cached_token():
         print("Обнаружен кешированный токен, автоматический вход...")
+        spotify_app.window.refresh_button.setEnabled(True)
         spotify_app.on_login_success()
 
     spotify_app.window.show()
