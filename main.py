@@ -9,7 +9,7 @@ from functools import partial
 from itertools import islice
 import qtawesome as qta
 
-from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog
+from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog, QListWidgetItem
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QTimer
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QProgressBar, QPushButton
@@ -574,11 +574,37 @@ class SpotifyApp(QObject):
                            self.on_like_status_changed, track_ids, label_text="Удаление из 'Понравившихся'...")
 
     def on_playlists_loaded(self, playlists):
+        """
+        Вызывается после загрузки плейлистов. Обновляет список в UI
+        и перезагружает треки, если плейлист был выбран.
+        """
+        # 1. Запоминаем ID текущего выбранного плейлиста, если он есть
+        previously_selected_id = self.current_playlist_id
+
         self.playlists = playlists
         self.window.playlist_list.clear()
+
+        newly_selected_item = None
         for playlist in self.playlists:
-            self.window.playlist_list.addItem(playlist['name'])
+            # Создаем новый элемент списка
+            item = QListWidgetItem(playlist['name'])
+            self.window.playlist_list.addItem(item)
+
+            # 2. Если ID этого плейлиста совпадает с тем, что был выбран ранее,
+            # запоминаем новый элемент списка для последующей активации.
+            if playlist['id'] == previously_selected_id:
+                newly_selected_item = item
+
         self.update_status(f"Загружено {len(self.playlists)} плейлистов.")
+
+        # 3. Если плейлист был выбран до обновления, выбираем его снова и обновляем треки
+        if newly_selected_item:
+            # Программно делаем элемент текущим (выделяем его)
+            self.window.playlist_list.setCurrentItem(newly_selected_item)
+
+            # Вызываем наш стандартный метод обновления треков.
+            # Он уже использует self.current_playlist_id, который остался прежним.
+            self.refresh_track_view()
 
     def on_tracks_loaded(self, tracks):
         self.populate_track_table(tracks)
