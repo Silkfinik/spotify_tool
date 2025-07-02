@@ -130,7 +130,7 @@ class SpotifyApp(QObject):
         self.current_playlist_name = ""
         self.is_playlist_view = False
 
-        self.cache_file = os.path.join('data', 'app_cache.json')
+        self.cache_file = os.path.join('.app_cache', 'cache.json')
 
         # Инициализируем кэши
         self.playlist_cache = {}
@@ -311,6 +311,52 @@ class SpotifyApp(QObject):
             self.thread.quit()
         else:
             self.restore_ui()
+
+    def _sync_cached_playlists_worker(self, playlists_from_server, cancellation_check=None, progress_callback=None, **kwargs):
+        """
+        Рабочий метод: проходит по списку плейлистов с сервера и обновляет
+        кэш только для тех, которые уже были кэшированы и изменились.
+        """
+        cached_playlist_ids = set(self.playlist_cache.keys())
+        # Проверять будем только те плейлисты, что есть в кэше
+        playlists_to_check = [p for p in playlists_from_server if p.get(
+            'id') in cached_playlist_ids]
+
+        total_to_check = len(playlists_to_check)
+        if total_to_check == 0:
+            return "Нет кэшированных плейлистов для синхронизации."
+
+        print("--- ЗАПУСК СИНХРОНИЗАЦИИ КЭША ---")
+
+        for i, playlist in enumerate(playlists_to_check):
+            playlist_id = playlist.get('id')
+            if cancellation_check and cancellation_check():
+                return "Синхронизация отменена."
+
+            if progress_callback:
+                progress_callback(i, total_to_check)
+
+            print(f"Проверка кэшированного плейлиста: {playlist.get('name')}")
+
+            # 1. Получаем свежий snapshot_id
+            current_snapshot_id = self.spotify_client.get_playlist_snapshot_id(
+                playlist_id)
+
+            # 2. Сравниваем с кэшированным
+            cached_snapshot_id = self.playlist_cache[playlist_id].get(
+                'snapshot_id')
+
+            if current_snapshot_id != cached_snapshot_id:
+                print(
+                    f"-> Плейлист '{playlist.get('name')}' изменен. Обновление кэша...")
+                # 3. Если изменился, запускаем полную процедуру обновления для него
+                self._update_one_playlist_in_cache(
+                    playlist_id, cancellation_check=cancellation_check)
+            else:
+                print(
+                    f"-> Плейлист '{playlist.get('name')}' не изменился. Пропуск.")
+
+        return f"Синхронизация завершена. Проверено {total_to_check} кэшированных плейлистов."
 
     def update_status(self, message: str, timeout: int = 4000):
         """
@@ -829,35 +875,30 @@ class SpotifyApp(QObject):
     def on_playlists_loaded(self, playlists):
         """
         Вызывается после загрузки плейлистов. Обновляет список в UI
-        и перезагружает треки, если плейлист был выбран.
+        и запускает синхронизацию только для измененных кэшированных плейлистов.
         """
-        # 1. Запоминаем ID текущего выбранного плейлиста, если он есть
         previously_selected_id = self.current_playlist_id
-
         self.playlists = playlists
         self.window.playlist_list.clear()
 
         newly_selected_item = None
         for playlist in self.playlists:
-            # Создаем новый элемент списка
             item = QListWidgetItem(playlist['name'])
             self.window.playlist_list.addItem(item)
-
-            # 2. Если ID этого плейлиста совпадает с тем, что был выбран ранее,
-            # запоминаем новый элемент списка для последующей активации.
             if playlist['id'] == previously_selected_id:
                 newly_selected_item = item
 
-        self.update_status(f"Загружено {len(self.playlists)} плейлистов.")
-
-        # 3. Если плейлист был выбран до обновления, выбираем его снова и обновляем треки
         if newly_selected_item:
-            # Программно делаем элемент текущим (выделяем его)
             self.window.playlist_list.setCurrentItem(newly_selected_item)
 
-            # Вызываем наш стандартный метод обновления треков.
-            # Он уже использует self.current_playlist_id, который остался прежним.
-            self.refresh_track_view()
+        # Запускаем фоновый процесс синхронизации
+        self.run_long_task(
+            self._sync_cached_playlists_worker,
+            # По завершении просто показываем сообщение
+            lambda result: self.update_status(result),
+            playlists,  # Передаем свежий список плейлистов в воркер
+            label_text="Синхронизация кэша..."
+        )
 
     def on_tracks_loaded(self, tracks):
         """Слот, вызываемый по завершении загрузки треков (любым способом)."""
@@ -1079,6 +1120,7 @@ class SpotifyApp(QObject):
 
 if __name__ == '__main__':
     os.makedirs('data', exist_ok=True)
+    os.makedirs('.app_cache', exist_ok=True)
 
     app = QApplication(sys.argv)
 

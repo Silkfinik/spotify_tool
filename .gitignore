@@ -178,3 +178,4 @@ pyrightconfig.json
 .spotify_cache
 
 data
+.app_cache
