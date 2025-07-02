@@ -24,6 +24,20 @@ from import_dialog import ImportDialog
 from importer import parse_file
 from paste_text_dialog import PasteTextDialog
 
+import requests  # <-- ДОБАВЬТЕ ЭТОТ ИМПОРТ
+
+
+def has_internet_connection():
+    """
+    Проверяет наличие интернет-соединения, отправляя запрос к надежному серверу.
+    """
+    try:
+        # Отправляем легкий HEAD-запрос с коротким таймаутом (3 секунды)
+        requests.head("http://www.google.com", timeout=3)
+        return True
+    except (requests.ConnectionError, requests.Timeout):
+        return False
+
 
 def chunks(iterable, size=100):
     """Разбивает итерируемый объект на части заданного размера."""
@@ -158,6 +172,11 @@ class SpotifyApp(QObject):
 
     def run_long_task(self, fn, on_finish, *args, label_text="Выполнение операции..."):
         """Запускает долгую задачу, показывая оверлей и индикатор в строке состояния."""
+        if not has_internet_connection():
+            self.update_status(
+                "❌ Ошибка: отсутствует подключение к интернету.")
+            return  # Немедленно выходим, не запуская задачу
+
         if self.thread and self.thread.isRunning():
             self.cancel_task(silent=True)
             QTimer.singleShot(100, lambda: self.run_long_task(
@@ -558,12 +577,26 @@ class SpotifyApp(QObject):
                                playlist_id, label_text=f"Удаление плейлиста '{playlist_name}'...")
 
     def add_selected_to_playlist(self, playlist_id, track_ids):
-        self.run_long_task(self.spotify_client.add_tracks_to_playlist, lambda _: self.update_status(
-            "Треки успешно добавлены."), playlist_id, track_ids, label_text="Добавление треков в плейлист...")
+        self.run_long_task(
+            self.spotify_client.add_tracks_to_playlist,
+            # --> ИЗМЕНЕНИЕ: Используем новый обработчик <--
+            lambda _: self.on_operation_and_refresh(
+                "Треки успешно добавлены. Обновление..."),
+            playlist_id,
+            track_ids,
+            label_text="Добавление треков в плейлист..."
+        )
 
     def remove_selected_from_playlist(self, track_ids):
-        self.run_long_task(self.spotify_client.remove_tracks_from_playlist, self.on_playlist_modified,
-                           self.current_playlist_id, track_ids, label_text="Удаление треков из плейлиста...")
+        self.run_long_task(
+            self.spotify_client.remove_tracks_from_playlist,
+            # --> ИЗМЕНЕНИЕ: Используем новый обработчик <--
+            lambda _: self.on_operation_and_refresh(
+                "Треки удалены. Обновление..."),
+            self.current_playlist_id,
+            track_ids,
+            label_text="Удаление треков из плейлиста..."
+        )
 
     def add_selected_to_liked(self, track_ids):
         self.run_long_task(self.spotify_client.add_tracks_to_liked, self.on_like_status_changed,
@@ -619,14 +652,23 @@ class SpotifyApp(QObject):
         QTimer.singleShot(100, self.load_user_playlists)
 
     def on_like_status_changed(self, _):
+        """
+        Вызывается после добавления/удаления трека из 'Понравившихся'.
+        Обновляет вид, если пользователь сейчас смотрит этот список.
+        """
         self.update_status("Статус 'Понравившихся' обновлен.")
 
-    def on_playlist_modified(self, result=None):
-        if isinstance(result, int):
-            self.update_status(
-                f"Удалено {result} дубликатов. Обновление вида...")
-        else:
-            self.update_status("Плейлист изменен. Обновление вида...")
+        # --> ДОБАВЛЕНО: Проверяем, нужно ли обновить вид <--
+        # Если текущий "плейлист" - это 'Понравившиеся треки',
+        # то запускаем обновление.
+        if self.current_playlist_id == 'liked_songs':
+            self.refresh_track_view()
+
+    def on_operation_and_refresh(self, success_message: str):
+        """
+        Универсальный обработчик: показывает сообщение и запускает обновление вида.
+        """
+        self.update_status(success_message)
         self.refresh_track_view()
 
     def on_playlist_deleted(self, success):
@@ -771,10 +813,13 @@ class SpotifyApp(QObject):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            # Запускаем задачу на реальное удаление (пересоздание плейлиста)
+            # Запускаем задачу на реальное удаление
             self.run_long_task(
                 self.spotify_client.deduplicate_playlist,
-                self.on_playlist_modified,  # После удаления обновляем вид
+                # --> ИЗМЕНЕНИЕ: Используем новый обработчик <--
+                # `result` из deduplicate_playlist - это кол-во удаленных дубликатов
+                lambda result: self.on_operation_and_refresh(
+                    f"Удалено {result} дубликатов. Обновление..."),
                 playlist_id,
                 label_text="Удаление дубликатов..."
             )

@@ -13,7 +13,10 @@ def chunks(iterable, size=100):
 class SpotifyClient:
     def __init__(self, spotipy_oauth_manager):
         self.sp = spotipy.Spotify(
-            auth_manager=spotipy_oauth_manager, requests_timeout=None)
+            auth_manager=spotipy_oauth_manager,
+            # Устанавливаем таймаут в 10 секунд для всех запросов
+            requests_timeout=10
+        )
 
     def _get_all_items(self, results, cancellation_check=None, progress_callback=None):
         items = results.get('items', [])
