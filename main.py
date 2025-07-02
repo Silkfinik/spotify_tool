@@ -90,21 +90,30 @@ class Worker(QObject):
         self.kwargs = kwargs
 
     def run(self):
-        """Выполняет задачу, передавая в нее колбэки для прогресса и отмены."""
+        """Выполняет задачу, передавая колбэки и обрабатывая отмену."""
         try:
             thread = QThread.currentThread()
 
             def cancellation_checker():
                 return thread.isInterruptionRequested()
 
-            # Передаем и проверку отмены, и репортер прогресса
             self.kwargs['cancellation_check'] = cancellation_checker
             self.kwargs['progress_callback'] = self.progress.emit
 
             result = self.fn(*self.args, **self.kwargs)
+
+            # Если задача не была прервана, отправляем сигнал о завершении
             if not thread.isInterruptionRequested():
                 self.finished.emit(result)
+
+        except InterruptedError as e:
+            # --> НОВЫЙ БЛОК: Ловим наше "запланированное" исключение <--
+            # Это не ошибка, а штатное прерывание. Просто выводим сообщение и тихо завершаемся.
+            print(f"Рабочий поток прерван пользователем: {e}")
+            # Мы не отправляем сигнал error, так как это не ошибка.
+
         except Exception:
+            # Этот блок теперь будет ловить только настоящие, непредвиденные ошибки
             self.error.emit((sys.exc_info()[0], sys.exc_info()[
                             1], traceback.format_exc()))
 
