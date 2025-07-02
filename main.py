@@ -8,6 +8,7 @@ from urllib.parse import urlparse, parse_qs
 from functools import partial
 from itertools import islice
 import qtawesome as qta
+import json
 
 from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog, QListWidgetItem
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QTimer
@@ -129,6 +130,15 @@ class SpotifyApp(QObject):
         self.current_playlist_name = ""
         self.is_playlist_view = False
 
+        self.cache_file = os.path.join('data', 'app_cache.json')
+
+        # Инициализируем кэши
+        self.playlist_cache = {}
+        self.track_cache = {}
+
+        # --> НОВОЕ: Загружаем кэш из файла при запуске <--
+        self.load_cache()
+
         self.thread = None
         self.worker = None
 
@@ -151,7 +161,7 @@ class SpotifyApp(QObject):
         # Подключение сигналов к слотам (методам)
         self.window.login_button.clicked.connect(self.start_login)
         self.window.refresh_button.clicked.connect(self.load_user_playlists)
-        self.code_received_signal.connect(self.process_auth_code)
+        self.window.cache_all_button.clicked.connect(self.cache_all_playlists)
         self.code_received_signal.connect(self.process_auth_code)
         self.window.playlist_list.itemClicked.connect(
             self.display_tracks_from_playlist)
@@ -167,6 +177,53 @@ class SpotifyApp(QObject):
             self.search_and_display_tracks)
         self.window.search_bar.returnPressed.connect(
             self.search_and_display_tracks)
+
+    def load_cache(self):
+        """Загружает кэш плейлистов и треков из файла."""
+        if not os.path.exists(self.cache_file):
+            print("Файл кэша не найден. Будет создан новый.")
+            return
+
+        try:
+            with open(self.cache_file, 'r', encoding='utf-8') as f:
+                cached_data = json.load(f)
+                self.playlist_cache = cached_data.get('playlist_cache', {})
+                self.track_cache = cached_data.get('track_cache', {})
+                print(
+                    f"Кэш успешно загружен. Загружено {len(self.playlist_cache)} плейлистов и {len(self.track_cache)} треков.")
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Ошибка при чтении файла кэша: {e}. Кэш будет сброшен.")
+            self.playlist_cache = {}
+            self.track_cache = {}
+
+    def save_cache(self):
+        """Сохраняет текущий кэш в файл."""
+        try:
+            with open(self.cache_file, 'w', encoding='utf-8') as f:
+                cache_to_save = {
+                    'playlist_cache': self.playlist_cache,
+                    'track_cache': self.track_cache
+                }
+                json.dump(cache_to_save, f, indent=4)
+                print("Кэш успешно сохранен.")
+        except IOError as e:
+            print(f"Ошибка при сохранении кэша: {e}")
+
+    def display_tracks_from_playlist(self, item):
+        """ФАЗА 1 (Инициатор): Запускает быструю проверку snapshot_id."""
+        row = self.window.playlist_list.row(item)
+        playlist = self.playlists[row]
+        self.current_playlist_id = playlist['id']
+        self.current_playlist_name = playlist['name']
+        self.is_playlist_view = True
+
+        # Запускаем короткую задачу только для проверки состояния кэша
+        self.run_long_task(
+            self.spotify_client.get_playlist_snapshot_id,
+            self._on_snapshot_received,  # Переходим к Фазе 2
+            self.current_playlist_id,
+            label_text="Проверка плейлиста..."
+        )
 
     # --- Обновленная инфраструктура для многопоточности ---
 
@@ -227,9 +284,6 @@ class SpotifyApp(QObject):
         self.status_cancel_button.hide()
         self.window.statusBar().removeWidget(self.status_progress_bar)
         self.window.statusBar().removeWidget(self.status_cancel_button)
-        self.update_status("Готово.", timeout=2000)
-
-        # Очищаем сообщение в строке состояния
         self.update_status("Готово.", timeout=2000)
 
     def update_progress(self, current_value, max_value):
@@ -296,6 +350,7 @@ class SpotifyApp(QObject):
         self.window.login_button.setText("✅ Успешно")
         self.window.login_button.setEnabled(False)
         self.window.refresh_button.setEnabled(True)
+        self.window.cache_all_button.setEnabled(True)
         self.window.import_button.setEnabled(True)
         self.window.paste_text_button.setEnabled(True)
         self.spotify_client = SpotifyClient(self.auth_manager.sp_oauth)
@@ -305,29 +360,187 @@ class SpotifyApp(QObject):
         self.run_long_task(self.spotify_client.get_user_playlists,
                            self.on_playlists_loaded, label_text="Загрузка плейлистов...")
 
-    def display_tracks_from_playlist(self, item):
-        row = self.window.playlist_list.row(item)
-        selected_playlist = self.playlists[row]
-        self.current_playlist_id = selected_playlist['id']
-        self.current_playlist_name = selected_playlist['name']
-        self.is_playlist_view = True
-        self.refresh_track_view()
+    def on_tracks_loaded(self, tracks):
+        """ФАЗА 4 (Финал): Отображает любые полученные треки."""
+        if isinstance(tracks, list):
+            self.populate_track_table(tracks)
+            self.update_status(f"Загружено {len(tracks)} треков.")
+        else:
+            self.update_status(str(tracks))
+
+    def _on_snapshot_received(self, current_snapshot_id):
+        """ФАЗА 2 (Решение): Вызывается после получения snapshot_id."""
+        playlist_id = self.current_playlist_id
+        cached_playlist = self.playlist_cache.get(playlist_id)
+
+        # Сценарий А: КЭШ-ХИТ. Отображаем мгновенно из кэша.
+        if cached_playlist and cached_playlist.get('snapshot_id') == current_snapshot_id:
+            print(f"КЭШ-ХИТ для плейлиста {playlist_id}. Загрузка из кэша.")
+            track_ids = cached_playlist['track_ids']
+            tracks_to_display = [self.track_cache[tid]
+                                 for tid in track_ids if tid in self.track_cache]
+            # Напрямую вызываем финальный слот
+            self.on_tracks_loaded(tracks_to_display)
+            return
+
+        # Сценарий Б: КЭШ-ПРОМАХ. Запускаем долгую задачу для загрузки данных.
+        print(f"КЭШ-ПРОМАХ для плейлиста {playlist_id}. Загрузка данных...")
+        self.run_long_task(
+            self._fetch_and_cache_playlist,
+            self.on_tracks_loaded,
+            playlist_id,
+            current_snapshot_id,
+            label_text=f"Загрузка треков из '{self.current_playlist_name}'..."
+        )
+
+    def _search_tracks_worker(self, query, cancellation_check=None, progress_callback=None, **kwargs):
+        """
+        Рабочий метод для поиска: находит ID, догружает детали из кэша/сети.
+        """
+        # 1. Получаем список ID по поисковому запросу
+        found_ids = self.spotify_client.search_tracks(query, **kwargs)
+        if not found_ids:
+            return []
+
+        # 2. Находим, информацию о каких треках нам нужно загрузить
+        new_ids_to_fetch = [
+            tid for tid in found_ids if tid not in self.track_cache]
+
+        # 3. Если есть новые треки, загружаем их детали
+        if new_ids_to_fetch:
+            # Здесь мы не можем показать детальный прогресс, так как не знаем заранее, сколько треков найдем
+            print(
+                f"Поиск нашел {len(found_ids)} треков, из них {len(new_ids_to_fetch)} новых. Загрузка деталей...")
+            new_details = self.spotify_client.get_tracks_details(
+                new_ids_to_fetch)
+            self.track_cache.update(new_details)
+
+        # 4. Собираем итоговый список для отображения из глобального кэша
+        return [self.track_cache[tid] for tid in found_ids if tid in self.track_cache]
+
+    def _fetch_and_cache_playlist(self, playlist_id, snapshot_id, cancellation_check=None, progress_callback=None, **kwargs):
+        """ФАЗА 3 (Рабочий): Загружает все необходимые данные и обновляет кэши."""
+        track_ids = self.spotify_client.get_playlist_track_ids(
+            playlist_id, cancellation_check, progress_callback)
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Отменено.")
+
+        self.playlist_cache[playlist_id] = {
+            "snapshot_id": snapshot_id, "track_ids": track_ids}
+        new_track_ids = [
+            tid for tid in track_ids if tid not in self.track_cache]
+
+        if new_track_ids:
+            new_track_details = self.spotify_client.get_tracks_details(
+                new_track_ids)
+            self.track_cache.update(new_track_details)
+
+        return [self.track_cache[tid] for tid in track_ids if tid in self.track_cache]
+
+    def cache_all_playlists(self):
+        """Инициирует процесс кэширования всех плейлистов."""
+        # Передаем копию списка плейлистов, чтобы избежать проблем с многопоточностью
+        playlists_to_cache = list(self.playlists)
+        self.run_long_task(
+            self._cache_all_playlists_worker,
+            self.on_cache_all_finished,
+            playlists_to_cache,
+            label_text="Кэширование всех плейлистов..."
+        )
+
+    def _cache_all_playlists_worker(self, playlists_to_cache, cancellation_check=None, progress_callback=None, **kwargs):
+        """
+        Рабочий метод: проходит по всем плейлистам и обновляет их кэш при необходимости.
+        """
+        total_playlists = len(playlists_to_cache)
+        for i, playlist in enumerate(playlists_to_cache):
+            if cancellation_check and cancellation_check():
+                return "Кэширование отменено."
+
+            # Сообщаем о прогрессе (какой плейлист обрабатываем)
+            if progress_callback:
+                progress_callback(i, total_playlists)
+
+            # Мы могли бы добавить проверку snapshot_id здесь для еще большей оптимизации,
+            # но для простоты просто вызываем обновление.
+            self._update_one_playlist_in_cache(
+                playlist['id'], cancellation_check=cancellation_check)
+
+        return f"Кэширование завершено. Обработано {total_playlists} плейлистов."
+
+    def on_cache_all_finished(self, result_message):
+        """Вызывается после завершения кэширования."""
+        self.update_status(result_message)
+
+    def _update_one_playlist_in_cache(self, playlist_id, cancellation_check=None, progress_callback=None):
+        """
+        Основная логика: загружает треки для ОДНОГО плейлиста и обновляет оба кэша.
+        Возвращает готовый для отображения список треков.
+        """
+        current_snapshot_id = self.spotify_client.get_playlist_snapshot_id(
+            playlist_id)
+
+        track_ids = self.spotify_client.get_playlist_track_ids(
+            playlist_id, cancellation_check, progress_callback)
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Отменено.")
+
+        self.playlist_cache[playlist_id] = {
+            "snapshot_id": current_snapshot_id, "track_ids": track_ids}
+        new_track_ids = [
+            tid for tid in track_ids if tid not in self.track_cache]
+
+        if new_track_ids:
+            new_track_details = self.spotify_client.get_tracks_details(
+                new_track_ids)
+            self.track_cache.update(new_track_details)
+
+        return [self.track_cache[tid] for tid in track_ids if tid in self.track_cache]
+
+    def _load_playlist_smart(self, playlist_id: str, **kwargs) -> list[dict]:
+        """
+        Выполняет умную загрузку: проверяет кэш и либо возвращает данные из него,
+        либо вызывает полную процедуру обновления.
+        """
+        current_snapshot_id = self.spotify_client.get_playlist_snapshot_id(
+            playlist_id)
+        cached_playlist = self.playlist_cache.get(playlist_id)
+
+        if cached_playlist and cached_playlist.get('snapshot_id') == current_snapshot_id:
+            print(f"КЭШ-ХИТ для плейлиста {playlist_id}.")
+            track_ids = cached_playlist['track_ids']
+            return [self.track_cache[tid] for tid in track_ids if tid in self.track_cache]
+        else:
+            print(f"КЭШ-ПРОМАХ для плейлиста {playlist_id}.")
+            return self._update_one_playlist_in_cache(playlist_id, **kwargs)
 
     def refresh_track_view(self):
+        """Запускает умную перезагрузку для текущего плейлиста."""
         if self.is_playlist_view and self.current_playlist_id:
-            self.run_long_task(self.spotify_client.get_playlist_tracks, self.on_tracks_loaded,
-                               self.current_playlist_id, label_text=f"Загрузка треков из '{self.current_playlist_name}'...")
+            # Находим нужный item в списке и "кликаем" по нему программно
+            items = self.window.playlist_list.findItems(
+                self.current_playlist_name, Qt.MatchFlag.MatchExactly)
+            if items:
+                self.display_tracks_from_playlist(items[0])
 
     def search_and_display_tracks(self):
+        """Инициирует фоновый поиск треков с использованием кэша."""
         if not self.spotify_client:
             return self.update_status("Сначала войдите в Spotify.")
-        query = self.window.search_bar.text()
+
+        query = self.window.search_bar.text().strip()
         if not query:
             return
+
         self.is_playlist_view = False
         self.current_playlist_name = f"Результаты поиска по '{query}'"
-        self.run_long_task(self.spotify_client.search_tracks, self.on_tracks_loaded,
-                           query, label_text=f"Поиск по запросу: '{query}'...")
+
+        self.run_long_task(
+            self._search_tracks_worker,
+            self.on_tracks_loaded,  # Используем тот же обработчик, что и для плейлистов
+            query,
+            label_text=f"Поиск по запросу: '{query}'..."
+        )
 
     def export_tracks(self):
         if self.window.track_table.rowCount() == 0:
@@ -556,18 +769,36 @@ class SpotifyApp(QObject):
         # ЭТАП 3: Запускаем финальную задачу по добавлению треков
         self.run_long_task(
             self.spotify_client.add_tracks_to_playlist,
-            lambda _: self.on_import_add_finished(len(found_ids), target_name),
+            # --> ИСПРАВЛЕНИЕ: Передаем target_id в лямбда-функцию <--
+            lambda _: self.on_import_add_finished(
+                len(found_ids), target_name, target_id),
             target_id,
             found_ids,
             label_text=f"Добавление треков в '{target_name}'..."
         )
 
-    def on_import_add_finished(self, count, playlist_name):
+    def on_import_add_finished(self, count, playlist_name, playlist_id):
         """Вызывается после завершения добавления треков в плейлист."""
         self.update_status(
             f"Успешно добавлено {count} треков в плейлист '{playlist_name}'.")
-        # Обновляем списки на случай создания нового плейлиста или для консистентности
-        QTimer.singleShot(100, self.load_user_playlists)
+
+        # 1. Инвалидируем кэш для измененного плейлиста
+        if playlist_id in self.playlist_cache:
+            del self.playlist_cache[playlist_id]
+            print(
+                f"Кэш для плейлиста {playlist_id} инвалидирован после импорта.")
+
+        # 2. Решаем, что обновить: текущий вид или общий список плейлистов
+        if playlist_id == self.current_playlist_id:
+            # Если мы смотрим на измененный плейлист, обновляем только его
+            print("Обновление текущего вида плейлиста...")
+            self.refresh_track_view()
+        else:
+            # Иначе, просто обновляем общий список плейлистов слева
+            # (это важно, если был создан новый плейлист).
+            print("Обновление общего списка плейлистов...")
+            # Используем QTimer, чтобы избежать вложенных вызовов
+            QTimer.singleShot(100, self.load_user_playlists)
 
     def confirm_and_delete_playlist(self, playlist_id, playlist_name):
         reply = QMessageBox.warning(self.window, "Подтверждение удаления",
@@ -576,22 +807,11 @@ class SpotifyApp(QObject):
             self.run_long_task(self.spotify_client.delete_playlist, self.on_playlist_deleted,
                                playlist_id, label_text=f"Удаление плейлиста '{playlist_name}'...")
 
-    def add_selected_to_playlist(self, playlist_id, track_ids):
-        self.run_long_task(
-            self.spotify_client.add_tracks_to_playlist,
-            # --> ИЗМЕНЕНИЕ: Используем новый обработчик <--
-            lambda _: self.on_operation_and_refresh(
-                "Треки успешно добавлены. Обновление..."),
-            playlist_id,
-            track_ids,
-            label_text="Добавление треков в плейлист..."
-        )
-
     def remove_selected_from_playlist(self, track_ids):
         self.run_long_task(
             self.spotify_client.remove_tracks_from_playlist,
-            # --> ИЗМЕНЕНИЕ: Используем новый обработчик <--
-            lambda _: self.on_operation_and_refresh(
+            # --> ИСПРАВЛЕНИЕ: Используем существующий метод on_playlist_modified <--
+            lambda _: self.on_playlist_modified(
                 "Треки удалены. Обновление..."),
             self.current_playlist_id,
             track_ids,
@@ -640,16 +860,16 @@ class SpotifyApp(QObject):
             self.refresh_track_view()
 
     def on_tracks_loaded(self, tracks):
-        self.populate_track_table(tracks)
-        self.update_status(f"Загружено {len(tracks)} треков.")
+        """Слот, вызываемый по завершении загрузки треков (любым способом)."""
+        if isinstance(tracks, list):
+            self.populate_track_table(tracks)
+            self.update_status(f"Загружено {len(tracks)} треков.")
+        else:  # На случай если пришла строка с ошибкой
+            self.update_status(str(tracks))
 
     def on_export_finished(self, success):
         self.update_status(
             "Экспорт успешно завершен." if success else "Ошибка во время экспорта.")
-
-    def on_import_finished(self, result_message: str):
-        self.update_status(result_message)
-        QTimer.singleShot(100, self.load_user_playlists)
 
     def on_like_status_changed(self, _):
         """
@@ -664,14 +884,15 @@ class SpotifyApp(QObject):
         if self.current_playlist_id == 'liked_songs':
             self.refresh_track_view()
 
-    def on_operation_and_refresh(self, success_message: str):
-        """
-        Универсальный обработчик: показывает сообщение и запускает обновление вида.
-        """
-        self.update_status(success_message)
-        self.refresh_track_view()
-
     def on_playlist_deleted(self, success):
+        """Обработчик после удаления плейлиста. ИНВАЛИДИРУЕТ КЭШ."""
+        # ID удаляемого плейлиста мы сохраняли в self.current_playlist_id
+        playlist_id_to_invalidate = self.current_playlist_id
+        if playlist_id_to_invalidate in self.playlist_cache:
+            del self.playlist_cache[playlist_id_to_invalidate]
+            print(
+                f"Кэш для плейлиста {playlist_id_to_invalidate} инвалидирован.")
+
         if success:
             self.update_status("Плейлист успешно удален. Обновление списка...")
             QTimer.singleShot(100, self.load_user_playlists)
@@ -703,8 +924,6 @@ class SpotifyApp(QObject):
         menu = QMenu(self.window.track_table)
         add_to_playlist_menu = menu.addMenu("Добавить в плейлист")
         for playlist in self.playlists:
-            if playlist['id'] == 'liked_songs':
-                continue
             action = add_to_playlist_menu.addAction(playlist['name'])
             action.triggered.connect(
                 partial(self.add_selected_to_playlist, playlist['id'], selected_track_ids))
@@ -727,6 +946,48 @@ class SpotifyApp(QObject):
         except Exception as e:
             print(f"Не удалось проверить статус 'Понравившихся': {e}")
         menu.exec(self.window.track_table.viewport().mapToGlobal(position))
+
+    def add_selected_to_playlist(self, playlist_id, track_ids):
+        """
+        Добавляет выделенные треки в плейлист. Если playlist_id - это 'liked_songs',
+        то вызывает метод для добавления в "Понравившиеся".
+        """
+        # --> НОВАЯ ЛОГИКА <--
+        if playlist_id == 'liked_songs':
+            # Если цель - "Понравившиеся", вызываем соответствующий метод
+            self.add_selected_to_liked(track_ids)
+            return
+
+        # Для всех остальных плейлистов используется старая логика
+        self.run_long_task(
+            self.spotify_client.add_tracks_to_playlist,
+            lambda _: self.on_playlist_modified("Треки успешно добавлены."),
+            playlist_id,
+            track_ids,
+            label_text="Добавление треков в плейлист..."
+        )
+
+    def on_playlist_modified(self, result=None, message="Плейлист изменен. Обновление..."):
+        """
+        Универсальный обработчик, который вызывается после любого изменения плейлиста.
+        Сначала инвалидирует кэш, а затем обновляет вид.
+        """
+        # --> ДОБАВЛЕНО: Инвалидация кэша для текущего плейлиста <--
+        playlist_id_to_invalidate = self.current_playlist_id
+        if playlist_id_to_invalidate and playlist_id_to_invalidate in self.playlist_cache:
+            del self.playlist_cache[playlist_id_to_invalidate]
+            print(
+                f"Кэш для плейлиста {playlist_id_to_invalidate} инвалидирован.")
+
+        # Если в 'result' пришло число, значит, это отчет от deduplicate
+        if isinstance(result, int):
+            self.update_status(f"Удалено {result} дубликатов. Обновление...")
+        else:
+            # В остальных случаях используем сообщение по умолчанию или переданное
+            self.update_status(message)
+
+        # В любом случае, запускаем обновление вида
+        self.refresh_track_view()
 
     def show_playlist_context_menu(self, position):
         item = self.window.playlist_list.itemAt(position)
@@ -753,15 +1014,6 @@ class SpotifyApp(QObject):
 
         menu.exec(self.window.playlist_list.viewport().mapToGlobal(position))
 
-    def handle_find_duplicates_action(self, playlist_id, playlist_name):
-        """Инициирует поиск дубликатов."""
-        self.run_long_task(
-            self._find_and_remove_duplicates,
-            self.on_duplicates_found,  # Слот для обработки результата
-            playlist_id,
-            label_text=f"Поиск дубликатов в '{playlist_name}'..."
-        )
-
     # --> НОВЫЙ МЕТОД-ИНИЦИАТОР <--
     def handle_find_duplicates_action(self, playlist_id, playlist_name):
         """Запускает процесс поиска дубликатов для подтверждения."""
@@ -777,12 +1029,14 @@ class SpotifyApp(QObject):
         """Находит дубликаты и возвращает информацию о них, ничего не удаляя."""
         from collections import Counter
 
-        all_tracks = self.spotify_client.get_playlist_tracks(
+        # --> ИСПРАВЛЕНИЕ: Вызываем новый правильный метод <--
+        track_ids = self.spotify_client.get_playlist_track_ids(
             playlist_id, cancellation_check, progress_callback)
+
         if cancellation_check and cancellation_check():
             raise InterruptedError("Операция отменена.")
 
-        track_ids = [t['id'] for t in all_tracks if t.get('id')]
+        # Теперь нам не нужно извлекать ID, мы их уже получили
         counts = Counter(track_ids)
         num_duplicates = sum(
             count - 1 for count in counts.values() if count > 1)
@@ -813,21 +1067,19 @@ class SpotifyApp(QObject):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            # Запускаем задачу на реальное удаление
             self.run_long_task(
                 self.spotify_client.deduplicate_playlist,
-                # --> ИЗМЕНЕНИЕ: Используем новый обработчик <--
-                # `result` из deduplicate_playlist - это кол-во удаленных дубликатов
-                lambda result: self.on_operation_and_refresh(
-                    f"Удалено {result} дубликатов. Обновление..."),
+                # --> ИСПРАВЛЕНО: вызываем существующий метод on_playlist_modified <--
+                lambda result: self.on_playlist_modified(
+                    result, message=f"Удалено {result} дубликатов. Обновление..."),
                 playlist_id,
                 label_text="Удаление дубликатов..."
             )
 
 
 if __name__ == '__main__':
-
     os.makedirs('data', exist_ok=True)
+
     app = QApplication(sys.argv)
 
     try:
@@ -838,9 +1090,11 @@ if __name__ == '__main__':
 
     spotify_app = SpotifyApp()
 
+    # --> НОВОЕ: Подключаем сохранение кэша к сигналу о выходе <--
+    app.aboutToQuit.connect(spotify_app.save_cache)
+
     if spotify_app.auth_manager.get_cached_token():
         print("Обнаружен кешированный токен, автоматический вход...")
-        spotify_app.window.refresh_button.setEnabled(True)
         spotify_app.on_login_success()
 
     spotify_app.window.show()

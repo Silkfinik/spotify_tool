@@ -33,6 +33,10 @@ class MainWindow(QMainWindow):
             qta.icon('fa5s.sync-alt', color='#E0E0E0'), "")
         self.refresh_button.setToolTip("Обновить список плейлистов")
         self.refresh_button.setEnabled(False)  # Будет неактивна до входа
+        self.cache_all_button = QPushButton(
+            qta.icon('fa5s.cloud-download-alt', color='#E0E0E0'), "")
+        self.cache_all_button.setToolTip("Загрузить все плейлисты в кэш")
+        self.cache_all_button.setEnabled(False)
         self.import_button = QPushButton(
             qta.icon('fa5s.file-import', color='#E0E0E0'), "")
         self.import_button.setToolTip("Импорт из файла...")
@@ -47,6 +51,7 @@ class MainWindow(QMainWindow):
         self.export_button.setEnabled(False)
         button_layout.addWidget(self.login_button)
         button_layout.addWidget(self.refresh_button)
+        button_layout.addWidget(self.cache_all_button)
         button_layout.addStretch()
         button_layout.addWidget(self.import_button)
         button_layout.addWidget(self.paste_text_button)
