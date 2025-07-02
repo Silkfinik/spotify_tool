@@ -508,8 +508,12 @@ class SpotifyApp(QObject):
     def on_like_status_changed(self, _):
         self.update_status("Статус 'Понравившихся' обновлен.")
 
-    def on_playlist_modified(self, _):
-        self.update_status("Плейлист изменен. Обновление вида...")
+    def on_playlist_modified(self, result=None):
+        if isinstance(result, int):
+            self.update_status(
+                f"Удалено {result} дубликатов. Обновление вида...")
+        else:
+            self.update_status("Плейлист изменен. Обновление вида...")
         self.refresh_track_view()
 
     def on_playlist_deleted(self, success):
@@ -577,12 +581,90 @@ class SpotifyApp(QObject):
         playlist = self.playlists[row]
         if playlist['id'] == 'liked_songs':
             return
+
         menu = QMenu(self.window.playlist_list)
+
+        # --> НОВЫЙ ПУНКТ МЕНЮ <--
+        find_duplicates_action = menu.addAction("Найти и удалить дубликаты")
+        find_duplicates_action.triggered.connect(
+            lambda: self.handle_find_duplicates_action(playlist['id'], playlist['name']))
+
+        menu.addSeparator()  # Разделитель для красоты
+
         delete_action = menu.addAction(
             f"Удалить плейлист '{playlist['name']}'")
         delete_action.triggered.connect(
             lambda: self.confirm_and_delete_playlist(playlist['id'], playlist['name']))
+
         menu.exec(self.window.playlist_list.viewport().mapToGlobal(position))
+
+    def handle_find_duplicates_action(self, playlist_id, playlist_name):
+        """Инициирует поиск дубликатов."""
+        self.run_long_task(
+            self._find_and_remove_duplicates,
+            self.on_duplicates_found,  # Слот для обработки результата
+            playlist_id,
+            label_text=f"Поиск дубликатов в '{playlist_name}'..."
+        )
+
+    # --> НОВЫЙ МЕТОД-ИНИЦИАТОР <--
+    def handle_find_duplicates_action(self, playlist_id, playlist_name):
+        """Запускает процесс поиска дубликатов для подтверждения."""
+        self.run_long_task(
+            self._find_duplicates_info,
+            self.on_duplicates_info_received,  # Новый слот для обработки результата
+            playlist_id,
+            label_text=f"Поиск дубликатов в '{playlist_name}'..."
+        )
+
+    # --> НОВЫЙ МЕТОД, ВЫПОЛНЯЕМЫЙ В ПОТОКЕ (ТОЛЬКО ЧТЕНИЕ) <--
+    def _find_duplicates_info(self, playlist_id: str, cancellation_check=None, progress_callback=None, **kwargs) -> tuple:
+        """Находит дубликаты и возвращает информацию о них, ничего не удаляя."""
+        from collections import Counter
+
+        all_tracks = self.spotify_client.get_playlist_tracks(
+            playlist_id, cancellation_check, progress_callback)
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Операция отменена.")
+
+        track_ids = [t['id'] for t in all_tracks if t.get('id')]
+        counts = Counter(track_ids)
+        num_duplicates = sum(
+            count - 1 for count in counts.values() if count > 1)
+
+        # Возвращаем ID плейлиста и количество найденных дубликатов
+        return (playlist_id, num_duplicates)
+
+    # --> НОВЫЙ СЛОТ-ОБРАБОТЧИК ДЛЯ ПОКАЗА ДИАЛОГА <--
+    def on_duplicates_info_received(self, result):
+        """Показывает диалог подтверждения, если дубликаты найдены."""
+        if not isinstance(result, tuple):
+            self.update_status(
+                str(result) if result else "Не удалось получить информацию о дубликатах.")
+            return
+
+        playlist_id, num_duplicates = result
+
+        if num_duplicates == 0:
+            self.update_status("Дубликаты не найдены.")
+            return
+
+        reply = QMessageBox.question(
+            self.window,
+            "Найдены дубликаты",
+            f"Найдено дубликатов: <b>{num_duplicates}</b>. <br><br>Хотите удалить их?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # Запускаем задачу на реальное удаление (пересоздание плейлиста)
+            self.run_long_task(
+                self.spotify_client.deduplicate_playlist,
+                self.on_playlist_modified,  # После удаления обновляем вид
+                playlist_id,
+                label_text="Удаление дубликатов..."
+            )
 
 
 if __name__ == '__main__':

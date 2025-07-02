@@ -1,3 +1,5 @@
+# spotify_client.py
+
 import spotipy
 from itertools import islice
 
@@ -14,11 +16,9 @@ class SpotifyClient:
             auth_manager=spotipy_oauth_manager, requests_timeout=None)
 
     def _get_all_items(self, results, cancellation_check=None, progress_callback=None):
-        """Собирает все элементы со всех страниц, сообщая о прогрессе."""
-        total = results.get('total', 0)
         items = results.get('items', [])
-        if progress_callback:
-            progress_callback(len(items), total)
+        if progress_callback and results.get('total', 0) > 0:
+            progress_callback(len(items), results.get('total'))
 
         while results and results.get('next'):
             if cancellation_check and cancellation_check():
@@ -29,8 +29,7 @@ class SpotifyClient:
                 new_items = results.get('items', [])
                 items.extend(new_items)
                 if progress_callback:
-                    # Сообщаем о новом количестве загруженных
-                    progress_callback(len(items), total)
+                    progress_callback(len(items), results.get('total'))
         return items
 
     def get_user_playlists(self, cancellation_check=None, progress_callback=None, **kwargs) -> list[dict]:
@@ -52,10 +51,9 @@ class SpotifyClient:
             results, cancellation_check, progress_callback)
         if not all_track_items:
             return []
-        # _parse_tracks быстрый, ему прогресс не нужен
         return self._parse_tracks(all_track_items)
 
-    def search_tracks(self, query: str, limit: int = 50, cancellation_check=None, progress_callback=None, **kwargs) -> list[dict]:
+    def search_tracks(self, query: str, limit: int = 50, cancellation_check=None, **kwargs) -> list[dict]:
         if not query:
             return []
         results = self.sp.search(q=query, type='track', limit=limit)
@@ -76,26 +74,6 @@ class SpotifyClient:
                 {'id': track['id'], 'name': track['name'], 'artist': artists, 'album': album_name})
         return tracks_data
 
-    def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str], **kwargs):
-        return self.sp.playlist_add_items(playlist_id, track_ids)
-
-    def remove_tracks_from_playlist(self, playlist_id: str, track_ids: list[str], **kwargs):
-        track_uris = [f"spotify:track:{track_id}" for track_id in track_ids]
-        return self.sp.playlist_remove_all_occurrences_of_items(playlist_id, track_uris)
-
-    def check_if_tracks_are_liked(self, track_ids: list[str], **kwargs) -> list[bool]:
-        return self.sp.current_user_saved_tracks_contains(track_ids)
-
-    def add_tracks_to_liked(self, track_ids: list[str], **kwargs):
-        return self.sp.current_user_saved_tracks_add(track_ids)
-
-    def remove_tracks_from_liked(self, track_ids: list[str], **kwargs):
-        return self.sp.current_user_saved_tracks_delete(track_ids)
-
-    def delete_playlist(self, playlist_id: str, **kwargs):
-        self.sp.current_user_unfollow_playlist(playlist_id)
-        return True
-
     def find_track_id(self, query: str, **kwargs) -> str | None:
         try:
             results = self.sp.search(q=query, type='track', limit=1)
@@ -115,3 +93,50 @@ class SpotifyClient:
         except Exception as e:
             print(f"Ошибка при создании плейлиста '{name}': {e}")
         return None
+
+    def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str], **kwargs):
+        # Метод playlist_add_items сам разбивает на части по 100
+        return self.sp.playlist_add_items(playlist_id, track_ids)
+
+    # --> УДАЛЯЕМ СТАРЫЕ, НЕРАБОТАЮЩИЕ МЕТОДЫ <--
+    # remove_specific_tracks_from_playlist
+    # remove_tracks_from_playlist
+
+    # --> НОВЫЙ, НАДЕЖНЫЙ МЕТОД <--
+    def deduplicate_playlist(self, playlist_id: str, cancellation_check=None, progress_callback=None, **kwargs):
+        """
+        Удаляет дубликаты из плейлиста, заменяя его содержимое на уникальный список треков.
+        """
+        # 1. Получаем все треки
+        all_tracks = self.get_playlist_tracks(
+            playlist_id, cancellation_check, progress_callback)
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Операция отменена.")
+
+        # 2. Собираем уникальные ID в порядке их первого появления
+        seen_ids = set()
+        unique_track_ids = []
+        for track in all_tracks:
+            track_id = track.get('id')
+            if track_id and track_id not in seen_ids:
+                unique_track_ids.append(track_id)
+                seen_ids.add(track_id)
+
+        # 3. Полностью заменяем треки в плейлисте на уникальный список
+        # spotipy сам разобьет на части по 100, если нужно
+        self.sp.playlist_replace_items(playlist_id, unique_track_ids)
+        # Возвращаем количество удаленных дубликатов
+        return len(all_tracks) - len(unique_track_ids)
+
+    def check_if_tracks_are_liked(self, track_ids: list[str], **kwargs) -> list[bool]:
+        return self.sp.current_user_saved_tracks_contains(track_ids)
+
+    def add_tracks_to_liked(self, track_ids: list[str], **kwargs):
+        return self.sp.current_user_saved_tracks_add(track_ids)
+
+    def remove_tracks_from_liked(self, track_ids: list[str], **kwargs):
+        return self.sp.current_user_saved_tracks_delete(track_ids)
+
+    def delete_playlist(self, playlist_id: str, **kwargs):
+        self.sp.current_user_unfollow_playlist(playlist_id)
+        return True
