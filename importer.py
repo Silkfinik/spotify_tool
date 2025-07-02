@@ -24,8 +24,6 @@ def _find_header_mappings(headers: list[str]) -> dict:
                 original_header_index = headers_lower.index(alias)
                 mappings[canonical_name] = headers[original_header_index]
                 break
-
-    print(f"Обнаружены следующие сопоставления колонок: {mappings}")
     return mappings
 
 

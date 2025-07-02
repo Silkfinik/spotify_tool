@@ -382,46 +382,42 @@ class SpotifyApp(QObject):
         import os
         dialog = ImportDialog(self.playlists, self.window)
 
-        # ВАЖНО: Мы программно устанавливаем путь к файлу и делаем поле нередактируемым.
-        # Пользователю больше не нужно выбирать файл во второй раз.
+        # Мы программно устанавливаем путь к файлу и делаем поле нередактируемым.
         dialog.filepath_edit.setText(filepath)
         dialog.filepath_edit.setReadOnly(True)
         dialog.browse_button.setEnabled(False)
 
+        # --> ВАШ КОД ВСТАВЛЯЕТСЯ СЮДА <--
         if dialog.exec():
             settings = dialog.get_import_settings()
             if settings:
-                # get_import_settings() возьмет путь из QLineEdit, который мы уже заполнили
+                # Запускаем первый этап импорта (поиск) в фоновом потоке
                 self.run_long_task(
                     self._perform_import,
-                    self.on_import_finished,
+                    self.on_import_search_finished,  # Указываем, какой метод вызвать по завершении
                     settings,
-                    label_text=f"Импорт из {os.path.basename(filepath)}..."
+                    label_text=f"Поиск треков из {os.path.basename(filepath)}..."
                 )
             else:
                 self.update_status(
                     "Ошибка: не все поля для импорта заполнены.")
 
-    def _perform_import(self, settings: dict, cancellation_check=None, progress_callback=None, **kwargs) -> str:
+    def _perform_import(self, settings: dict, cancellation_check=None, progress_callback=None, **kwargs) -> dict:
         """
-        Выполняет полный цикл импорта: парсинг, поиск ID, создание/выбор плейлиста и добавление треков.
-        Этот метод предназначен для выполнения в Worker'е.
+        ЭТАП 1: Парсит файл, находит ID треков и определяет целевой плейлист.
+        Ничего не добавляет, только собирает информацию.
         """
         try:
-            # 1. Парсинг файла
+            # 1. Парсинг и поиск Spotify ID
             queries_or_ids = parse_file(settings['filepath'])
             total_to_find = len(queries_or_ids)
             if total_to_find == 0:
-                return "В файле не найдено записей для импорта."
+                raise ValueError("В файле не найдено записей для импорта.")
 
-            # 2. Поиск Spotify ID для каждой записи
             found_track_ids = []
             for i, item in enumerate(queries_or_ids):
-                # Проверяем, не была ли нажата кнопка "Отмена"
                 if cancellation_check and cancellation_check():
-                    return "Импорт отменен пользователем."
-
-                # Сообщаем о прогрессе поиска (шаг, всего шагов)
+                    raise InterruptedError("Операция отменена.")
                 if progress_callback:
                     progress_callback(i + 1, total_to_find)
 
@@ -433,35 +429,123 @@ class SpotifyApp(QObject):
                         found_track_ids.append(track_id)
 
             if not found_track_ids:
-                return "Не найдено ни одного трека для добавления."
+                raise ValueError("Не найдено ни одного трека для добавления.")
 
-            if cancellation_check and cancellation_check():
-                return "Импорт отменен пользователем."
-
-            # 3. Создание или выбор целевого плейлиста
+            # 2. Определение целевого плейлиста
             target_playlist_id = None
+            target_playlist_name = ""
             if settings['mode'] == 'create':
-                playlist_name = settings['target']
+                target_playlist_name = settings['target']
                 target_playlist_id = self.spotify_client.create_new_playlist(
-                    name=playlist_name)
+                    name=target_playlist_name)
                 if not target_playlist_id:
                     raise Exception(
-                        f"Не удалось создать плейлист '{playlist_name}'")
+                        f"Не удалось создать плейлист '{target_playlist_name}'")
             else:
                 target_playlist_id = settings['target']
+                # Находим имя существующего плейлиста по его ID
+                target_playlist_name = next(
+                    (p['name'] for p in self.playlists if p['id'] == target_playlist_id), "Неизвестный плейлист")
 
-            # 4. Добавление треков в плейлист "пачками" по 100
-            for id_chunk in chunks(found_track_ids, 100):
-                if cancellation_check and cancellation_check():
-                    return "Импорт отменен пользователем."
-                self.spotify_client.add_tracks_to_playlist(
-                    playlist_id=target_playlist_id, track_ids=id_chunk)
-
-            return f"Успешно добавлено {len(found_track_ids)} из {total_to_find} треков."
+            # 3. Возвращаем всю собранную информацию для следующего шага
+            return {
+                "ok": True,
+                "found_ids": found_track_ids,
+                "target_id": target_playlist_id,
+                "target_name": target_playlist_name,
+                "mode": settings['mode']
+            }
 
         except Exception as e:
             traceback.print_exc()
-            return f"Ошибка: {e}"
+            return {"ok": False, "error": str(e)}
+
+    def on_import_search_finished(self, result: dict):
+        """
+        ЭТАП 2: Вызывается после поиска треков. Проверяет дубликаты
+        ВНУТРИ ФАЙЛА, а затем - с плейлистом.
+        """
+        if not result.get("ok"):
+            return self.update_status(f"Ошибка на этапе поиска: {result.get('error')}")
+
+        found_ids = result['found_ids']
+        target_id = result['target_id']
+        target_name = result['target_name']
+
+        # --- НАЧАЛО НОВОЙ ЛОГИКИ: Проверка дубликатов внутри файла ---
+
+        # Сохраняем уникальные ID в порядке их появления
+        unique_ids_in_file = list(dict.fromkeys(found_ids))
+        internal_duplicates_count = len(found_ids) - len(unique_ids_in_file)
+
+        if internal_duplicates_count > 0:
+            msg_box = QMessageBox(self.window)
+            msg_box.setWindowTitle("Найдены дубликаты в файле")
+            msg_box.setText(
+                f"Импортируемый файл содержит <b>{internal_duplicates_count}</b> дубликатов.")
+            msg_box.setInformativeText("Как поступить с ними?")
+
+            unique_btn = msg_box.addButton(
+                "Импортировать только уникальные", QMessageBox.ButtonRole.YesRole)
+            all_btn = msg_box.addButton(
+                "Импортировать все", QMessageBox.ButtonRole.NoRole)
+            msg_box.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+            msg_box.exec()
+
+            clicked_button = msg_box.clickedButton()
+            if clicked_button == unique_btn:
+                found_ids = unique_ids_in_file  # Используем только уникальные ID
+            elif clicked_button != all_btn:  # Если "Отмена" или окно закрыто
+                return self.update_status("Импорт отменен.")
+
+        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
+        # Если добавляем в существующий плейлист, проверяем дубликаты с ним
+        if result['mode'] == 'add':
+            existing_ids = self.spotify_client.get_playlist_track_ids(
+                target_id)
+            duplicates_with_playlist = [
+                track_id for track_id in found_ids if track_id in existing_ids]
+
+            if duplicates_with_playlist:
+                msg_box = QMessageBox(self.window)
+                msg_box.setWindowTitle("Найдены дубликаты в плейлисте")
+                msg_box.setText(
+                    f"В плейлисте «{target_name}» уже есть <b>{len(duplicates_with_playlist)}</b> из импортируемых треков.")
+                msg_box.setInformativeText("Добавить дубликаты все равно?")
+
+                add_all_btn = msg_box.addButton(
+                    "Добавить все", QMessageBox.ButtonRole.YesRole)
+                skip_btn = msg_box.addButton(
+                    "Пропустить дубликаты", QMessageBox.ButtonRole.NoRole)
+                msg_box.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+                msg_box.exec()
+
+                clicked_button = msg_box.clickedButton()
+                if clicked_button == skip_btn:
+                    found_ids = [
+                        track_id for track_id in found_ids if track_id not in existing_ids]
+                elif clicked_button != add_all_btn:
+                    return self.update_status("Импорт отменен.")
+
+        if not found_ids:
+            return self.update_status("Нет новых треков для добавления.")
+
+        # ЭТАП 3: Запускаем финальную задачу по добавлению треков
+        self.run_long_task(
+            self.spotify_client.add_tracks_to_playlist,
+            lambda _: self.on_import_add_finished(len(found_ids), target_name),
+            target_id,
+            found_ids,
+            label_text=f"Добавление треков в '{target_name}'..."
+        )
+
+    def on_import_add_finished(self, count, playlist_name):
+        """Вызывается после завершения добавления треков в плейлист."""
+        self.update_status(
+            f"Успешно добавлено {count} треков в плейлист '{playlist_name}'.")
+        # Обновляем списки на случай создания нового плейлиста или для консистентности
+        QTimer.singleShot(100, self.load_user_playlists)
 
     def confirm_and_delete_playlist(self, playlist_id, playlist_name):
         reply = QMessageBox.warning(self.window, "Подтверждение удаления",

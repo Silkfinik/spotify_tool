@@ -98,9 +98,13 @@ class SpotifyClient:
         # Метод playlist_add_items сам разбивает на части по 100
         return self.sp.playlist_add_items(playlist_id, track_ids)
 
-    # --> УДАЛЯЕМ СТАРЫЕ, НЕРАБОТАЮЩИЕ МЕТОДЫ <--
-    # remove_specific_tracks_from_playlist
-    # remove_tracks_from_playlist
+    def remove_tracks_from_playlist(self, playlist_id: str, track_ids: list[str], **kwargs):
+        """Удаляет все вхождения указанных треков из плейлиста."""
+        # Этот метод spotipy требует URI треков, а не просто ID.
+        track_uris = [f"spotify:track:{track_id}" for track_id in track_ids]
+        self.sp.playlist_remove_all_occurrences_of_items(
+            playlist_id, track_uris)
+        return True
 
     # --> НОВЫЙ, НАДЕЖНЫЙ МЕТОД <--
     def deduplicate_playlist(self, playlist_id: str, cancellation_check=None, progress_callback=None, **kwargs):
@@ -140,3 +144,10 @@ class SpotifyClient:
     def delete_playlist(self, playlist_id: str, **kwargs):
         self.sp.current_user_unfollow_playlist(playlist_id)
         return True
+
+    def get_playlist_track_ids(self, playlist_id: str, **kwargs) -> set[str]:
+        """
+        Возвращает множество (set) всех ID треков в плейлисте.
+        """
+        all_tracks = self.get_playlist_tracks(playlist_id, **kwargs)
+        return {track['id'] for track in all_tracks if track.get('id')}
