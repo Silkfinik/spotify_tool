@@ -329,47 +329,47 @@ class SpotifyApp(QObject):
         """
         Рабочий метод: проходит по списку плейлистов с сервера и обновляет
         кэш только для тех, которые уже были кэшированы и изменились.
+        Возвращает список ID обновленных плейлистов.
         """
         cached_playlist_ids = set(self.playlist_cache.keys())
-        # Проверять будем только те плейлисты, что есть в кэше
         playlists_to_check = [p for p in playlists_from_server if p.get(
             'id') in cached_playlist_ids]
 
+        updated_ids = []  # <-- Список для хранения ID обновленных плейлистов
+
         total_to_check = len(playlists_to_check)
         if total_to_check == 0:
-            return "Нет кэшированных плейлистов для синхронизации."
+            return {"message": "Нет кэшированных плейлистов для синхронизации.", "updated_ids": []}
 
         print("--- ЗАПУСК СИНХРОНИЗАЦИИ КЭША ---")
 
         for i, playlist in enumerate(playlists_to_check):
             playlist_id = playlist.get('id')
             if cancellation_check and cancellation_check():
-                return "Синхронизация отменена."
+                raise InterruptedError("Синхронизация отменена.")
 
             if progress_callback:
                 progress_callback(i, total_to_check)
 
-            print(f"Проверка кэшированного плейлиста: {playlist.get('name')}")
-
-            # 1. Получаем свежий snapshot_id
             current_snapshot_id = self.spotify_client.get_playlist_snapshot_id(
                 playlist_id)
-
-            # 2. Сравниваем с кэшированным
             cached_snapshot_id = self.playlist_cache[playlist_id].get(
                 'snapshot_id')
 
             if current_snapshot_id != cached_snapshot_id:
                 print(
                     f"-> Плейлист '{playlist.get('name')}' изменен. Обновление кэша...")
-                # 3. Если изменился, запускаем полную процедуру обновления для него
                 self._update_one_playlist_in_cache(
                     playlist_id, cancellation_check=cancellation_check)
+                updated_ids.append(playlist_id)  # <-- Добавляем ID в список
             else:
                 print(
                     f"-> Плейлист '{playlist.get('name')}' не изменился. Пропуск.")
 
-        return f"Синхронизация завершена. Проверено {total_to_check} кэшированных плейлистов."
+        return {
+            "message": f"Синхронизация завершена. Проверено {total_to_check} кэшированных плейлистов.",
+            "updated_ids": updated_ids
+        }
 
     def update_status(self, message: str, timeout: int = 4000):
         """
@@ -442,6 +442,22 @@ class SpotifyApp(QObject):
                 self.on_covers_downloaded,  # Указываем, что делать после загрузки
                 label_text="Загрузка обложек..."
             )
+
+    def on_sync_finished(self, result):
+        """Вызывается после завершения синхронизации кэша."""
+        if not isinstance(result, dict):
+            self.update_status(str(result))
+            return
+
+        # Показываем итоговое сообщение
+        self.update_status(result.get("message", "Синхронизация завершена."))
+
+        # Проверяем, был ли обновлен текущий открытый плейлист
+        updated_ids = result.get("updated_ids", [])
+        if self.current_playlist_id and self.current_playlist_id in updated_ids:
+            print(
+                f"Текущий плейлист ({self.current_playlist_id}) был обновлен. Перезагрузка вида...")
+            self.refresh_track_view()
 
     def _on_snapshot_received(self, current_snapshot_id):
         """ФАЗА 2 (Решение): Вызывается после получения snapshot_id."""
@@ -956,12 +972,14 @@ class SpotifyApp(QObject):
                                playlist_id, label_text=f"Удаление плейлиста '{playlist_name}'...")
 
     def remove_selected_from_playlist(self, track_ids):
+        """Удаляет выделенные треки из текущего плейлиста."""
+        playlist_id_to_modify = self.current_playlist_id
         self.run_long_task(
             self.spotify_client.remove_tracks_from_playlist,
-            # --> ИСПРАВЛЕНИЕ: Используем существующий метод on_playlist_modified <--
+            # --> ИЗМЕНЕНИЕ: Передаем ID и сообщение в обработчик <--
             lambda _: self.on_playlist_modified(
-                "Треки удалены. Обновление..."),
-            self.current_playlist_id,
+                playlist_id_to_modify, message="Треки удалены."),
+            playlist_id_to_modify,
             track_ids,
             label_text="Удаление треков из плейлиста..."
         )
@@ -977,7 +995,7 @@ class SpotifyApp(QObject):
     def on_playlists_loaded(self, playlists):
         """
         Вызывается после загрузки плейлистов. Обновляет список в UI
-        и запускает синхронизацию только для измененных кэшированных плейлистов.
+        и запускает синхронизацию, которая затем обновит вид, если нужно.
         """
         previously_selected_id = self.current_playlist_id
         self.playlists = playlists
@@ -993,12 +1011,11 @@ class SpotifyApp(QObject):
         if newly_selected_item:
             self.window.playlist_list.setCurrentItem(newly_selected_item)
 
-        # Запускаем фоновый процесс синхронизации
+        # Запускаем фоновый процесс синхронизации с новым обработчиком
         self.run_long_task(
             self._sync_cached_playlists_worker,
-            # По завершении просто показываем сообщение
-            lambda result: self.update_status(result),
-            playlists,  # Передаем свежий список плейлистов в воркер
+            self.on_sync_finished,  # <-- Используем новый обработчик
+            playlists,
             label_text="Синхронизация кэша..."
         )
 
@@ -1056,36 +1073,24 @@ class SpotifyApp(QObject):
             self.update_status("Не удалось удалить плейлист.")
 
     def populate_track_table(self, tracks: list[dict]):
-        """Очищает и заполняет таблицу треков данными, включая обложки. (ОТЛАДОЧНАЯ ВЕРСИЯ)"""
+        """Очищает и заполняет таблицу треков данными, включая обложки."""
         self.window.track_table.blockSignals(True)
         self.window.track_table.setRowCount(0)
         self.window.track_table.setRowCount(len(tracks))
 
         show_covers = self.window.show_covers_action.isChecked()
-        print(f"\n--- ОТЛАДКА: populate_track_table ---")
-        print(f"Флаг 'Показывать обложки' включен: {show_covers}")
 
         for row_num, track_data in enumerate(tracks):
             # --- Логика для обложки ---
             cover_item = QTableWidgetItem()
             cover_path = track_data.get('cover_path')
 
+            cover_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
             # Проверяем условия для показа обложки
             if show_covers and cover_path and os.path.exists(cover_path):
                 icon = QIcon(cover_path)
                 cover_item.setIcon(icon)
-            else:
-                # Если обложка не показывается, выводим причину
-                if row_num < 5:  # Выводим только для первых 5 треков, чтобы не засорять консоль
-                    print(
-                        f"  - Трек '{track_data['name'][:30]}...': обложка не показана. Причины:")
-                    if not show_covers:
-                        print("    - Опция 'Показывать обложки' выключена.")
-                    if not cover_path:
-                        print("    - В кэше нет пути к файлу обложки ('cover_path').")
-                    if cover_path and not os.path.exists(cover_path):
-                        print(
-                            f"    - Файл обложки не найден по пути: {cover_path}")
 
             # --- Остальная логика ---
             name_item = QTableWidgetItem(track_data['name'])
@@ -1098,15 +1103,16 @@ class SpotifyApp(QObject):
             self.window.track_table.setItem(
                 row_num, 3, QTableWidgetItem(track_data['album']))
 
-        self.window.track_table.setIconSize(QSize(64, 64))
-        self.window.track_table.blockSignals(False)
-        self.window.export_button.setEnabled(len(tracks) > 0)
-        print("--- КОНЕЦ ОТЛАДКИ ---\n")
+            self.window.track_table.setIconSize(QSize(48, 48))
+            self.window.track_table.blockSignals(False)
+            self.window.export_button.setEnabled(len(tracks) > 0)
 
     def toggle_cover_visibility(self, checked):
         """
         Включает/выключает показ обложек и запускает их загрузку при включении.
         """
+        self.window.track_table.setColumnHidden(0, not checked)
+
         # Если поставили галочку - запускаем полную проверку и загрузку всех недостающих обложек
         if checked:
             self.run_long_task(
@@ -1219,46 +1225,39 @@ class SpotifyApp(QObject):
         menu.exec(self.window.track_table.viewport().mapToGlobal(position))
 
     def add_selected_to_playlist(self, playlist_id, track_ids):
-        """
-        Добавляет выделенные треки в плейлист. Если playlist_id - это 'liked_songs',
-        то вызывает метод для добавления в "Понравившиеся".
-        """
-        # --> НОВАЯ ЛОГИКА <--
+        """Добавляет выделенные треки в плейлист."""
         if playlist_id == 'liked_songs':
-            # Если цель - "Понравившиеся", вызываем соответствующий метод
             self.add_selected_to_liked(track_ids)
             return
 
-        # Для всех остальных плейлистов используется старая логика
         self.run_long_task(
             self.spotify_client.add_tracks_to_playlist,
-            lambda _: self.on_playlist_modified("Треки успешно добавлены."),
+            # --> ИЗМЕНЕНИЕ: Передаем ID и сообщение в обработчик <--
+            lambda _: self.on_playlist_modified(
+                playlist_id, message="Треки успешно добавлены."),
             playlist_id,
             track_ids,
             label_text="Добавление треков в плейлист..."
         )
 
-    def on_playlist_modified(self, result=None, message="Плейлист изменен. Обновление..."):
+    def on_playlist_modified(self, playlist_id_modified: str, result=None, message="Плейлист изменен. Обновление..."):
         """
         Универсальный обработчик, который вызывается после любого изменения плейлиста.
-        Сначала инвалидирует кэш, а затем обновляет вид.
         """
-        # --> ДОБАВЛЕНО: Инвалидация кэша для текущего плейлиста <--
-        playlist_id_to_invalidate = self.current_playlist_id
-        if playlist_id_to_invalidate and playlist_id_to_invalidate in self.playlist_cache:
-            del self.playlist_cache[playlist_id_to_invalidate]
-            print(
-                f"Кэш для плейлиста {playlist_id_to_invalidate} инвалидирован.")
+        # 1. Инвалидируем кэш для того плейлиста, который был изменен
+        if playlist_id_modified in self.playlist_cache:
+            del self.playlist_cache[playlist_id_modified]
+            print(f"Кэш для плейлиста {playlist_id_modified} инвалидирован.")
 
-        # Если в 'result' пришло число, значит, это отчет от deduplicate
-        if isinstance(result, int):
-            self.update_status(f"Удалено {result} дубликатов. Обновление...")
-        else:
-            # В остальных случаях используем сообщение по умолчанию или переданное
-            self.update_status(message)
+        # 2. Формируем и показываем сообщение в строке состояния
+        status_message = message
+        if isinstance(result, int):  # Для удаления дубликатов
+            status_message = f"Удалено {result} дубликатов. Обновление..."
+        self.update_status(status_message)
 
-        # В любом случае, запускаем обновление вида
-        self.refresh_track_view()
+        # 3. Если измененный плейлист сейчас на экране - обновляем вид
+        if playlist_id_modified == self.current_playlist_id:
+            self.refresh_track_view()
 
     def show_playlist_context_menu(self, position):
         item = self.window.playlist_list.itemAt(position)
@@ -1340,9 +1339,8 @@ class SpotifyApp(QObject):
         if reply == QMessageBox.StandardButton.Yes:
             self.run_long_task(
                 self.spotify_client.deduplicate_playlist,
-                # --> ИСПРАВЛЕНО: вызываем существующий метод on_playlist_modified <--
-                lambda result: self.on_playlist_modified(
-                    result, message=f"Удалено {result} дубликатов. Обновление..."),
+                # --> ИЗМЕНЕНИЕ: Передаем ID и результат в обработчик <--
+                lambda res: self.on_playlist_modified(playlist_id, result=res),
                 playlist_id,
                 label_text="Удаление дубликатов..."
             )

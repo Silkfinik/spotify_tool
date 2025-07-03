@@ -106,15 +106,17 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
         # --> ИЗМЕНЕНО: Настраиваем ширину новых колонок <--
-        self.track_table.setColumnWidth(0, 64)  # Колонка для обложки 64x64
+        self.track_table.setColumnWidth(0, 48)  # Колонка для обложки 48х48
         header.setSectionResizeMode(
             0, QHeaderView.ResizeMode.Fixed)  # Фиксированный размер
         self.track_table.setColumnWidth(1, 350)  # Название
         self.track_table.setColumnWidth(2, 250)  # Исполнитель
         header.setStretchLastSection(True)  # Альбом растягивается
 
+        self.track_table.setColumnHidden(0, True)
+
         # --> ДОБАВЛЕНО: Устанавливаем высоту строк по умолчанию <--
-        self.track_table.verticalHeader().setDefaultSectionSize(64)
+        self.track_table.verticalHeader().setDefaultSectionSize(48)
 
         right_panel_layout.addWidget(self.track_table)
         splitter.addWidget(right_panel_widget)

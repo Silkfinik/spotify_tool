@@ -1,21 +1,21 @@
-/* style.qss (v2 - High Contrast Dark Theme) */
+/* style.qss (v3 - Larger Font) */
 
-/* Новая палитра:
-    #121212 - Основной фон окна (самый темный)
-    #1E1E1E - Фон для виджетов контента (таблицы, списки)
+/* Палитра:
+    #121212 - Основной фон окна
+    #1E1E1E - Фон для виджетов контента
     #2A2A2A - Фон для кнопок и полей ввода
-    #535353 - Цвет рамок и разделителей (более заметный)
-    #e8e8e8 - Основной цвет текста
-    #FFFFFF - Яркий текст (для заголовков, акцентов)
-    #1DB954 - Фирменный зеленый Spotify (акцентный)
+    #535353 - Цвет рамок и разделителей
+    #E0E0E0 - Основной цвет текста
+    #FFFFFF - Яркий текст
+    #1DB954 - Акцентный
 */
 
 QWidget {
     background-color: #121212;
-    color: #e8e8e8;
+    color: #E0E0E0;
     font-family: "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
-    font-size: 10pt;
-    border: none; /* Убираем рамки по умолчанию */
+    font-size: 11pt; /* <-- ИЗМЕНЕНИЕ: Увеличен базовый шрифт */
+    border: none;
 }
 
 QMainWindow {
@@ -25,7 +25,7 @@ QMainWindow {
 QPushButton {
     background-color: #2A2A2A;
     color: #FFFFFF;
-    border: 1px solid #535353; /* Более заметная рамка */
+    border: 1px solid #535353;
     padding: 8px 16px;
     border-radius: 15px;
     min-height: 14px;
@@ -51,7 +51,6 @@ QLineEdit {
     border-radius: 5px;
     color: #E0E0E0;
 }
-/* Стиль для текста-подсказки */
 QLineEdit::placeholder {
     color: #808080;
 }
@@ -70,24 +69,28 @@ QComboBox QAbstractItemView {
     background-color: #2A2A2A;
     selection-background-color: #1DB954;
     border: 1px solid #535353;
-    outline: 0px; /* Убираем рамку фокуса */
+    outline: 0px;
 }
 
-/* Стили для таблицы и списка */
 QTableWidget, QListWidget {
-    background-color: #1E1E1E; /* Фон светлее, чем у окна */
+    background-color: #1E1E1E;
     border: 1px solid #2A2A2A;
-    gridline-color: #2A2A2A; /* Сетка теперь более заметна */
+    gridline-color: #2A2A2A;
 }
-QTableWidget::item, QListWidget::item {
+
+QTableWidget::item {
     padding-left: 5px;
+    /* font-size теперь наследуется от QWidget */
+    font-weight: normal;
+}
+QListWidget::item {
+    padding: 5px; /* Отступы для элементов списка плейлистов */
 }
 QTableWidget::item:selected, QListWidget::item:selected {
     background-color: #1DB954;
     color: #FFFFFF;
 }
 
-/* Стили для заголовков */
 QHeaderView::section {
     background-color: #2A2A2A;
     color: #FFFFFF;
@@ -98,7 +101,7 @@ QHeaderView::section {
 }
 QHeaderView::section:vertical {
     font-weight: normal;
-    color: #e8e8e8;
+    color: #B3B3B3;
     border-bottom: 1px solid #2A2A2A;
 }
 QTableCornerButton::section {
@@ -128,7 +131,6 @@ QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
     background: #1DB954;
 }
 
-/* Стили для диалоговых окон */
 QDialog {
     background-color: #1E1E1E;
 }
@@ -144,7 +146,6 @@ QGroupBox::title {
     padding: 0 5px;
 }
 
-/* Стиль для всплывающих меню */
 QMenu {
     background-color: #2A2A2A;
     border: 1px solid #535353;
@@ -153,43 +154,34 @@ QMenu::item:selected {
     background-color: #1DB954;
 }
 
-/* Стиль для самого прогресс-бара */
 QProgressBar {
     border: 1px solid #535353;
     border-radius: 7px;
     background-color: #2A2A2A;
-    text-align: center; /* Центрируем текст с процентами */
+    text-align: center;
     color: #FFFFFF;
 }
-
-/* Стиль для заполненной части прогресс-бара */
 QProgressBar::chunk {
-    background-color: #1DB954; /* Зеленый цвет Spotify */
+    background-color: #1DB954;
     border-radius: 6px;
 }
 
-/* Стиль для кнопки отмены в строке состояния */
-/* Чтобы стилизовать ее отдельно, мы дадим ей имя в main.py */
 QPushButton#StatusBarCancelButton {
     background-color: #535353;
     color: #E0E0E0;
     border: none;
     padding: 4px 8px;
     border-radius: 7px;
-    min-height: 12px; /* Уменьшаем высоту */
+    min-height: 12px;
 }
 QPushButton#StatusBarCancelButton:hover {
-    background-color: #D32F2F; /* Красный при наведении для действия "отмена" */
+    background-color: #D32F2F;
     color: #FFFFFF;
 }
 QPushButton#StatusBarCancelButton:pressed {
-    background-color: #B71C1C; /* Более темный красный при нажатии */
+    background-color: #B71C1C;
 }
 
-/* style.qss */
-
-/* === Стиль для оверлея === */
 QFrame#Overlay {
-    /* Полупрозрачный темно-серый фон */
-    background-color: rgba(18, 18, 18, 0.7); 
+    background-color: rgba(18, 18, 18, 0.7);
 }
