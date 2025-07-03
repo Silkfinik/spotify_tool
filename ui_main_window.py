@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QListWidget, QTableWidget, QPushButton, QHeaderView, QLineEdit, QFrame
 )
+from PyQt6.QtGui import QAction
 import qtawesome as qta
 
 
@@ -15,6 +16,12 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Spotify Manager")
         self.setGeometry(100, 100, 1200, 800)
         self.statusBar()
+
+        menu_bar = self.menuBar()
+        view_menu = menu_bar.addMenu("Вид")
+        self.show_covers_action = QAction(
+            "Показывать обложки", self, checkable=True)
+        view_menu.addAction(self.show_covers_action)
 
         # Создаем единый центральный виджет
         central_widget = QWidget()
@@ -79,22 +86,36 @@ class MainWindow(QMainWindow):
         search_layout.addWidget(self.search_button)
         right_panel_layout.addLayout(search_layout)
 
+        # --- Правая панель: таблица треков ---
         self.track_table = QTableWidget()
         self.track_table.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu)
-        self.track_table.setColumnCount(3)
+
+        # --> ИЗМЕНЕНО: Добавляем колонку для обложек (всего 4) <--
+        self.track_table.setColumnCount(4)
         self.track_table.setHorizontalHeaderLabels(
-            ["Название", "Исполнитель", "Альбом"])
+            ["", "Название", "Исполнитель", "Альбом"])
+
         self.track_table.setSortingEnabled(False)
         self.track_table.setShowGrid(True)
         self.track_table.verticalHeader().setVisible(True)
         self.track_table.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers)
+
         header = self.track_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.track_table.setColumnWidth(0, 350)
-        self.track_table.setColumnWidth(1, 250)
-        header.setStretchLastSection(True)
+
+        # --> ИЗМЕНЕНО: Настраиваем ширину новых колонок <--
+        self.track_table.setColumnWidth(0, 64)  # Колонка для обложки 64x64
+        header.setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Fixed)  # Фиксированный размер
+        self.track_table.setColumnWidth(1, 350)  # Название
+        self.track_table.setColumnWidth(2, 250)  # Исполнитель
+        header.setStretchLastSection(True)  # Альбом растягивается
+
+        # --> ДОБАВЛЕНО: Устанавливаем высоту строк по умолчанию <--
+        self.track_table.verticalHeader().setDefaultSectionSize(64)
+
         right_panel_layout.addWidget(self.track_table)
         splitter.addWidget(right_panel_widget)
         splitter.setSizes([300, 900])

@@ -73,8 +73,8 @@ class SpotifyClient:
 
     def get_tracks_details(self, track_ids: list[str]) -> dict:
         """
-        Принимает список ID треков и возвращает словарь с их БАЗОВОЙ информацией.
-        АУДИО-ХАРАКТЕРИСТИКИ БОЛЬШЕ НЕ ЗАПРАШИВАЮТСЯ.
+        Принимает список ID треков и возвращает словарь с их базовой информацией,
+        ВКЛЮЧАЯ URL на обложку альбома.
         """
         if not track_ids:
             return {}
@@ -89,12 +89,19 @@ class SpotifyClient:
                     if not track:
                         continue
 
-                    # Собираем только основную, надежную информацию
+                    # --> ВОЗВРАЩАЕМ ЛОГИКУ ПОИСКА URL ОБЛОЖКИ <--
+                    cover_url = None
+                    if track.get('album') and track['album'].get('images'):
+                        # Берем последнюю картинку в списке, она самая маленькая (64x64)
+                        cover_url = track['album']['images'][-1]['url']
+
+                    # Собираем полную информацию о треке
                     tracks_details_dict[track['id']] = {
                         'id': track['id'],
                         'name': track['name'],
                         'artist': ', '.join(artist['name'] for artist in track['artists']),
-                        'album': track.get('album', {}).get('name', 'N/A')
+                        'album': track.get('album', {}).get('name', 'N/A'),
+                        'cover_url': cover_url  # Добавляем URL в данные кэша
                     }
             except Exception as e:
                 print(f"Ошибка при получении информации о треках: {e}")

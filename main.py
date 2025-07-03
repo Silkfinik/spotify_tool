@@ -11,10 +11,11 @@ import qtawesome as qta
 import json
 
 from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog, QListWidgetItem
-from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QTimer
+from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QTimer, QSize
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QProgressBar, QPushButton
 from PyQt6.QtWidgets import QProgressDialog
+from PyQt6.QtGui import QIcon
 
 from ui_main_window import MainWindow
 from auth_manager import AuthManager
@@ -140,6 +141,7 @@ class SpotifyApp(QObject):
         self.is_playlist_view = False
 
         self.cache_file = os.path.join('.app_cache', 'cache.json')
+        self.covers_dir = os.path.join('.app_cache', 'covers')
 
         # Инициализируем кэши
         self.playlist_cache = {}
@@ -186,6 +188,8 @@ class SpotifyApp(QObject):
             self.search_and_display_tracks)
         self.window.search_bar.returnPressed.connect(
             self.search_and_display_tracks)
+        self.window.show_covers_action.toggled.connect(
+            self.toggle_cover_visibility)  # <-- НОВЫЙ СИГНАЛ
 
     def load_cache(self):
         """Загружает кэш плейлистов и треков из файла."""
@@ -416,12 +420,28 @@ class SpotifyApp(QObject):
                            self.on_playlists_loaded, label_text="Загрузка плейлистов...")
 
     def on_tracks_loaded(self, tracks):
-        """ФАЗА 4 (Финал): Отображает любые полученные треки."""
-        if isinstance(tracks, list):
-            self.populate_track_table(tracks)
-            self.update_status(f"Загружено {len(tracks)} треков.")
-        else:
+        """
+        ФАЗА 4 (Финал): Отображает любые полученные треки и, если нужно,
+        запускает фоновую загрузку обложек.
+        """
+        if not isinstance(tracks, list):
+            # Обрабатываем случай, когда вместо списка треков пришло сообщение об ошибке
             self.update_status(str(tracks))
+            self.populate_track_table([])  # Очищаем таблицу в случае ошибки
+            return
+
+        # 1. Сразу отображаем текстовую информацию, чтобы интерфейс был отзывчивым
+        self.populate_track_table(tracks)
+        self.update_status(f"Загружено {len(tracks)} треков.")
+
+        # 2. Если включен режим показа обложек, запускаем их фоновую дозагрузку
+        if self.window.show_covers_action.isChecked():
+            print("Режим обложек включен, запускаю проверку и дозагрузку...")
+            self.run_long_task(
+                self._download_covers_worker,
+                self.on_covers_downloaded,  # Указываем, что делать после загрузки
+                label_text="Загрузка обложек..."
+            )
 
     def _on_snapshot_received(self, current_snapshot_id):
         """ФАЗА 2 (Решение): Вызывается после получения snapshot_id."""
@@ -552,22 +572,95 @@ class SpotifyApp(QObject):
 
         return [self.track_cache[tid] for tid in track_ids if tid in self.track_cache]
 
-    def _load_playlist_smart(self, playlist_id: str, **kwargs) -> list[dict]:
+    def _download_covers_for_tracks(self, tracks_to_check: list[dict], cancellation_check=None, progress_callback=None):
         """
-        Выполняет умную загрузку: проверяет кэш и либо возвращает данные из него,
-        либо вызывает полную процедуру обновления.
+        Вспомогательный метод, который скачивает обложки для переданного списка треков.
+        Предполагается, что он выполняется внутри Worker'а.
+        """
+        os.makedirs(self.covers_dir, exist_ok=True)
+
+        # Находим треки, для которых нужно скачать обложки
+        tracks_to_download = [
+            track for track in tracks_to_check
+            if track.get('cover_url') and not track.get('cover_path')
+        ]
+
+        total_to_download = len(tracks_to_download)
+        for i, track in enumerate(tracks_to_download):
+            if cancellation_check and cancellation_check():
+                print("Загрузка обложек прервана.")
+                break
+            # Сообщаем о прогрессе скачивания обложек
+            if progress_callback:
+                progress_callback(i, total_to_download)
+
+            filepath = os.path.join(self.covers_dir, f"{track['id']}.jpg")
+            try:
+                response = requests.get(track['cover_url'])
+                response.raise_for_status()
+                with open(filepath, 'wb') as f:
+                    f.write(response.content)
+                # Сразу обновляем наш кэш в памяти
+                if track['id'] in self.track_cache:
+                    self.track_cache[track['id']]['cover_path'] = filepath
+            except requests.RequestException as e:
+                print(f"Не удалось скачать обложку для {track['id']}: {e}")
+
+    def _load_playlist_smart(self, playlist_id: str, cancellation_check=None, progress_callback=None, **kwargs) -> list[dict]:
+        """
+        Выполняет умную загрузку: проверяет кэш, загружает треки И, ЕСЛИ НУЖНО, их обложки.
         """
         current_snapshot_id = self.spotify_client.get_playlist_snapshot_id(
             playlist_id)
         cached_playlist = self.playlist_cache.get(playlist_id)
 
+        # Сценарий А: КЭШ-ХИТ. Плейлист не менялся.
         if cached_playlist and cached_playlist.get('snapshot_id') == current_snapshot_id:
             print(f"КЭШ-ХИТ для плейлиста {playlist_id}.")
             track_ids = cached_playlist['track_ids']
+            # Проверяем, нужно ли догрузить обложки для треков из кэша
+            if self.window.show_covers_action.isChecked():
+                tracks_to_check = [self.track_cache[tid]
+                                   for tid in track_ids if tid in self.track_cache]
+                self._download_covers_for_tracks(
+                    tracks_to_check, cancellation_check, progress_callback)
+
+            # Собираем финальный список из кэша ПОСЛЕ возможной дозагрузки обложек
             return [self.track_cache[tid] for tid in track_ids if tid in self.track_cache]
-        else:
-            print(f"КЭШ-ПРОМАХ для плейлиста {playlist_id}.")
-            return self._update_one_playlist_in_cache(playlist_id, **kwargs)
+
+        # Сценарий Б: КЭШ-ПРОМАХ. Плейлист новый или был изменен.
+        print(f"КЭШ-ПРОМАХ для плейлиста {playlist_id}.")
+
+        # Шаг 1: Загружаем ID треков
+        track_ids = self.spotify_client.get_playlist_track_ids(
+            playlist_id, cancellation_check, progress_callback)
+        if cancellation_check and cancellation_check():
+            raise InterruptedError("Отменено.")
+
+        # Шаг 2: Обновляем кэш плейлистов (L1)
+        self.playlist_cache[playlist_id] = {
+            "snapshot_id": current_snapshot_id, "track_ids": track_ids}
+
+        # Шаг 3: Находим и загружаем детали для неизвестных треков
+        new_track_ids = [
+            tid for tid in track_ids if tid not in self.track_cache]
+        if new_track_ids:
+            new_track_details = self.spotify_client.get_tracks_details(
+                new_track_ids)
+            self.track_cache.update(new_track_details)
+
+        # Шаг 4: Собираем предварительный список треков для проверки/загрузки обложек
+        current_playlist_tracks = [self.track_cache[tid]
+                                   for tid in track_ids if tid in self.track_cache]
+
+        # Шаг 5: Если опция включена, скачиваем недостающие обложки
+        if self.window.show_covers_action.isChecked():
+            self.update_status("Загрузка обложек...", 0)
+            self._download_covers_for_tracks(
+                current_playlist_tracks, cancellation_check)
+
+        # Шаг 6 (ФИНАЛ): Собираем итоговый список из кэша, который теперь точно содержит все данные
+        return [self.track_cache[tid] for tid in track_ids if tid in self.track_cache]
 
     def refresh_track_view(self):
         """Запускает умную перезагрузку для текущего плейлиста."""
@@ -910,12 +1003,25 @@ class SpotifyApp(QObject):
         )
 
     def on_tracks_loaded(self, tracks):
-        """Слот, вызываемый по завершении загрузки треков (любым способом)."""
-        if isinstance(tracks, list):
-            self.populate_track_table(tracks)
-            self.update_status(f"Загружено {len(tracks)} треков.")
-        else:  # На случай если пришла строка с ошибкой
+        """
+        Финальный слот: отображает треки и принудительно запускает загрузку обложек, если нужно.
+        """
+        if not isinstance(tracks, list):
             self.update_status(str(tracks))
+            self.populate_track_table([])
+            return
+
+        # 1. Сразу отображаем текстовую информацию
+        self.populate_track_table(tracks)
+        self.update_status(f"Загружено {len(tracks)} треков.")
+
+        # 2. ПРИНУДИТЕЛЬНЫЙ ЗАПУСК
+        # Если опция уже была включена, имитируем ее повторное включение,
+        # чтобы запустить гарантированно работающий процесс загрузки.
+        if self.window.show_covers_action.isChecked():
+            print("Принудительный запуск загрузки обложек для нового плейлиста...")
+            # Используем таймер, чтобы этот вызов не конфликтовал с завершением текущего потока
+            QTimer.singleShot(50, lambda: self.toggle_cover_visibility(True))
 
     def on_export_finished(self, success):
         self.update_status(
@@ -950,24 +1056,139 @@ class SpotifyApp(QObject):
             self.update_status("Не удалось удалить плейлист.")
 
     def populate_track_table(self, tracks: list[dict]):
+        """Очищает и заполняет таблицу треков данными, включая обложки. (ОТЛАДОЧНАЯ ВЕРСИЯ)"""
+        self.window.track_table.blockSignals(True)
         self.window.track_table.setRowCount(0)
         self.window.track_table.setRowCount(len(tracks))
+
+        show_covers = self.window.show_covers_action.isChecked()
+        print(f"\n--- ОТЛАДКА: populate_track_table ---")
+        print(f"Флаг 'Показывать обложки' включен: {show_covers}")
+
         for row_num, track_data in enumerate(tracks):
+            # --- Логика для обложки ---
+            cover_item = QTableWidgetItem()
+            cover_path = track_data.get('cover_path')
+
+            # Проверяем условия для показа обложки
+            if show_covers and cover_path and os.path.exists(cover_path):
+                icon = QIcon(cover_path)
+                cover_item.setIcon(icon)
+            else:
+                # Если обложка не показывается, выводим причину
+                if row_num < 5:  # Выводим только для первых 5 треков, чтобы не засорять консоль
+                    print(
+                        f"  - Трек '{track_data['name'][:30]}...': обложка не показана. Причины:")
+                    if not show_covers:
+                        print("    - Опция 'Показывать обложки' выключена.")
+                    if not cover_path:
+                        print("    - В кэше нет пути к файлу обложки ('cover_path').")
+                    if cover_path and not os.path.exists(cover_path):
+                        print(
+                            f"    - Файл обложки не найден по пути: {cover_path}")
+
+            # --- Остальная логика ---
             name_item = QTableWidgetItem(track_data['name'])
             name_item.setData(Qt.ItemDataRole.UserRole, track_data.get('id'))
-            self.window.track_table.setItem(row_num, 0, name_item)
+
+            self.window.track_table.setItem(row_num, 0, cover_item)
+            self.window.track_table.setItem(row_num, 1, name_item)
             self.window.track_table.setItem(
-                row_num, 1, QTableWidgetItem(track_data['artist']))
+                row_num, 2, QTableWidgetItem(track_data['artist']))
             self.window.track_table.setItem(
-                row_num, 2, QTableWidgetItem(track_data['album']))
+                row_num, 3, QTableWidgetItem(track_data['album']))
+
+        self.window.track_table.setIconSize(QSize(64, 64))
+        self.window.track_table.blockSignals(False)
         self.window.export_button.setEnabled(len(tracks) > 0)
+        print("--- КОНЕЦ ОТЛАДКИ ---\n")
+
+    def toggle_cover_visibility(self, checked):
+        """
+        Включает/выключает показ обложек и запускает их загрузку при включении.
+        """
+        # Если поставили галочку - запускаем полную проверку и загрузку всех недостающих обложек
+        if checked:
+            self.run_long_task(
+                self._download_covers_worker,
+                self.on_covers_downloaded,
+                label_text="Загрузка недостающих обложек..."
+            )
+        # Если сняли галочку - просто обновляем текущий вид, чтобы скрыть иконки.
+        # Это будет мгновенно, так как данные уже в кэше.
+        else:
+            self.refresh_track_view()
+
+    def _download_covers_worker(self, cancellation_check=None, progress_callback=None, **kwargs):
+        """Рабочий метод: скачивает недостающие обложки для всех треков в кэше."""
+        os.makedirs(self.covers_dir, exist_ok=True)
+
+        tracks_to_download = [
+            track for track in self.track_cache.values()
+            if track.get('cover_url') and not track.get('cover_path')
+        ]
+
+        total_covers = len(tracks_to_download)
+        for i, track in enumerate(tracks_to_download):
+            if cancellation_check and cancellation_check():
+                return "Загрузка отменена."
+            if progress_callback:
+                progress_callback(i, total_covers)
+
+            filepath = os.path.join(self.covers_dir, f"{track['id']}.jpg")
+            try:
+                response = requests.get(track['cover_url'])
+                response.raise_for_status()
+                with open(filepath, 'wb') as f:
+                    f.write(response.content)
+                # Обновляем кэш, добавляя путь к скачанному файлу
+                self.track_cache[track['id']]['cover_path'] = filepath
+            except requests.RequestException as e:
+                print(f"Не удалось скачать обложку для {track['id']}: {e}")
+
+        return f"Загрузка обложек завершена. Скачано {total_covers} новых."
+
+    def on_covers_downloaded(self, result_message):
+        """
+        Вызывается после завершения загрузки обложек.
+        Напрямую обновляет таблицу, используя свежие данные из кэша.
+        """
+        self.update_status(result_message)
+
+        # 1. Проверяем, включен ли еще режим показа обложек
+        if not self.window.show_covers_action.isChecked():
+            return
+
+        # 2. Получаем ID текущего плейлиста, который мы просматриваем
+        playlist_id = self.current_playlist_id
+        if not playlist_id:
+            return
+
+        # 3. Получаем актуальный список ID треков для этого плейлиста из кэша
+        cached_playlist = self.playlist_cache.get(playlist_id)
+        if not cached_playlist:
+            return  # На случай, если кэш был очищен
+
+        track_ids = cached_playlist.get('track_ids', [])
+
+        # 4. Получаем для них самые свежие данные из глобального кэша треков
+        # (включая только что добавленные пути к обложкам)
+        tracks_to_display = [self.track_cache[tid]
+                             for tid in track_ids if tid in self.track_cache]
+
+        # 5. Напрямую перерисовываем таблицу с этими данными
+        print("Обновление таблицы для отображения скачанных обложек...")
+        self.populate_track_table(tracks_to_display)
 
     def show_track_context_menu(self, position):
         selected_items = self.window.track_table.selectedItems()
         if not selected_items:
             return
-        selected_track_ids = list(set(self.window.track_table.item(
-            item.row(), 0).data(Qt.ItemDataRole.UserRole) for item in selected_items))
+        selected_track_ids = list(set(
+            self.window.track_table.item(
+                item.row(), 1).data(Qt.ItemDataRole.UserRole)
+            for item in selected_items
+        ))
         selected_track_ids = [tid for tid in selected_track_ids if tid]
         if not selected_track_ids:
             return
