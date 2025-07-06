@@ -185,3 +185,23 @@ QPushButton#StatusBarCancelButton:pressed {
 QFrame#Overlay {
     background-color: rgba(18, 18, 18, 0.7);
 }
+
+/* --- Динамические шрифты --- */
+
+/* Боковая панель */
+QListWidget[fontSize="8"] { font-size: 8pt; }
+QListWidget[fontSize="9"] { font-size: 9pt; }
+QListWidget[fontSize="10"] { font-size: 10pt; }
+QListWidget[fontSize="11"] { font-size: 11pt; }
+QListWidget[fontSize="12"] { font-size: 12pt; }
+QListWidget[fontSize="13"] { font-size: 13pt; }
+QListWidget[fontSize="14"] { font-size: 14pt; }
+
+/* Таблица */
+QTableWidget[fontSize="8"] { font-size: 8pt; }
+QTableWidget[fontSize="9"] { font-size: 9pt; }
+QTableWidget[fontSize="10"] { font-size: 10pt; }
+QTableWidget[fontSize="11"] { font-size: 11pt; }
+QTableWidget[fontSize="12"] { font-size: 12pt; }
+QTableWidget[fontSize="13"] { font-size: 13pt; }
+QTableWidget[fontSize="14"] { font-size: 14pt; }

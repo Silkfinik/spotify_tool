@@ -17,6 +17,7 @@ from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QProgressBar, QPushButton
 from PyQt6.QtWidgets import QProgressDialog
 from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QPixmap
 
 from ui_main_window import MainWindow
 from auth_manager import AuthManager
@@ -28,13 +29,6 @@ from importer import parse_file
 from paste_text_dialog import PasteTextDialog
 
 import requests  # <-- ДОБАВЬТЕ ЭТОТ ИМПОРТ
-
-UI_SCALE_MAP = {0: 'small', 1: 'medium', 2: 'large'}
-UI_SCALE_CONFIG = {
-    'small': {'row_height': 36, 'font_size': 9},
-    'medium': {'row_height': 48, 'font_size': 11},
-    'large': {'row_height': 64, 'font_size': 12},
-}
 
 
 def has_internet_connection():
@@ -210,8 +204,13 @@ class SpotifyApp(QObject):
             self.settings.get('show_covers', False))
 
     def load_settings(self):
-        """Загружает настройки из файла."""
-        defaults = {'show_covers': False, 'ui_scale_value': 1}  # 1 = medium
+        """Загружает детальные настройки из файла."""
+        defaults = {
+            'show_covers': False,
+            'sidebar_font_size': 10,
+            'table_font_size': 11,
+            'cover_size': 48,
+        }
         if not os.path.exists(self.settings_file):
             self.settings = defaults
             return
@@ -219,8 +218,8 @@ class SpotifyApp(QObject):
             with open(self.settings_file, 'r', encoding='utf-8') as f:
                 self.settings = json.load(f)
             # Убедимся, что все ключи на месте
-            if 'ui_scale_value' not in self.settings:
-                self.settings['ui_scale_value'] = defaults['ui_scale_value']
+            for key, value in defaults.items():
+                self.settings.setdefault(key, value)
         except Exception:
             self.settings = defaults
 
@@ -239,39 +238,43 @@ class SpotifyApp(QObject):
 
     # --> НОВЫЙ МЕТОД, который применяется только при старте <--
     def apply_startup_settings(self):
-        """Применяет настройки к интерфейсу ОДИН РАЗ при запуске."""
-        show_covers = self.settings.get('show_covers', False)
-        self.window.show_covers_action.setChecked(show_covers)
-        self.window.track_table.setColumnHidden(0, not show_covers)
+        """Применяет все детальные настройки к интерфейсу при запуске."""
+        s = self.settings
+        # Настройка обложек
+        self.window.show_covers_action.setChecked(s.get('show_covers', False))
+        self.window.track_table.setColumnHidden(
+            0, not s.get('show_covers', False))
 
-        scale_value = self.settings.get('ui_scale_value', 1)
-        scale_name = UI_SCALE_MAP.get(scale_value, 'medium')
-        config = UI_SCALE_CONFIG.get(scale_name, UI_SCALE_CONFIG['medium'])
+        # Настройка размеров обложек и строк
+        size = s.get('cover_size', 48)
+        self.window.track_table.verticalHeader().setDefaultSectionSize(size)
+        self.window.track_table.setColumnWidth(0, size)
+        self.window.track_table.setIconSize(QSize(size, size))
 
-        app_font = QApplication.font()
-        app_font.setPointSize(config['font_size'])
-        QApplication.setFont(app_font)
+        # Установка динамических свойств для QSS
+        self.window.playlist_list.setProperty(
+            "fontSize", s.get('sidebar_font_size', 10))
+        self.window.track_table.setProperty(
+            "fontSize", s.get('table_font_size', 11))
 
-        self.window.track_table.verticalHeader(
-        ).setDefaultSectionSize(config['row_height'])
-        self.window.track_table.setColumnWidth(0, config['row_height'])
-        self.window.track_table.setIconSize(
-            QSize(config['row_height'], config['row_height']))
+        # Применяем стили ко всему окну
+        for widget in [self.window.playlist_list, self.window.track_table]:
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
     # --> НОВЫЙ МЕТОД для вызова окна настроек <--
     def open_settings_dialog(self):
-        """Открывает диалог настроек вида."""
-        current_scale = self.settings.get('ui_scale_value', 1)
-        dialog = SettingsDialog(current_scale, self.window)
-
+        """Открывает новое окно детальных настроек."""
+        dialog = SettingsDialog(self.settings, self.window)
         if dialog.exec():
-            new_scale = dialog.get_selected_scale_value()
-            if new_scale != current_scale:
-                self.settings['ui_scale_value'] = new_scale
+            new_settings = dialog.get_new_settings()
+            # Сравниваем словари, чтобы понять, были ли изменения
+            if new_settings != self.settings:
+                self.settings = new_settings
                 QMessageBox.information(
                     self.window,
                     "Настройки сохранены",
-                    "Изменения размера вступят в силу после перезапуска приложения."
+                    "Изменения вступят в силу после перезапуска приложения."
                 )
 
     def load_cache(self):
@@ -1156,39 +1159,41 @@ class SpotifyApp(QObject):
             self.update_status("Не удалось удалить плейлист.")
 
     def populate_track_table(self, tracks: list[dict]):
-        """Очищает и заполняет таблицу треков данными, включая обложки."""
+        """Очищает и заполняет таблицу треков, правильно масштабируя обложки."""
         self.window.track_table.blockSignals(True)
         self.window.track_table.setRowCount(0)
         self.window.track_table.setRowCount(len(tracks))
 
         show_covers = self.window.show_covers_action.isChecked()
+        icon_size = self.window.track_table.iconSize()
 
         for row_num, track_data in enumerate(tracks):
-            # --- Логика для обложки ---
-            cover_item = QTableWidgetItem()
-            cover_path = track_data.get('cover_path')
+            # Ячейка для обложки
+            if show_covers:
+                cover_item = QTableWidgetItem()
+                self.window.track_table.setItem(row_num, 0, cover_item)
 
-            cover_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cover_path = track_data.get('cover_path')
+                if cover_path and os.path.exists(cover_path):
+                    pixmap = QPixmap(cover_path)
+                    # --> ГЛАВНОЕ ИЗМЕНЕНИЕ: Масштабируем с сохранением пропорций <--
+                    scaled_pixmap = pixmap.scaled(
+                        icon_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
-            # Проверяем условия для показа обложки
-            if show_covers and cover_path and os.path.exists(cover_path):
-                icon = QIcon(cover_path)
-                cover_item.setIcon(icon)
+                    icon = QIcon(scaled_pixmap)
+                    cover_item.setIcon(icon)
 
-            # --- Остальная логика ---
+            # Остальные ячейки
             name_item = QTableWidgetItem(track_data['name'])
             name_item.setData(Qt.ItemDataRole.UserRole, track_data.get('id'))
-
-            self.window.track_table.setItem(row_num, 0, cover_item)
             self.window.track_table.setItem(row_num, 1, name_item)
             self.window.track_table.setItem(
                 row_num, 2, QTableWidgetItem(track_data['artist']))
             self.window.track_table.setItem(
                 row_num, 3, QTableWidgetItem(track_data['album']))
 
-            self.window.track_table.setIconSize(QSize(48, 48))
-            self.window.track_table.blockSignals(False)
-            self.window.export_button.setEnabled(len(tracks) > 0)
+        self.window.track_table.blockSignals(False)
+        self.window.export_button.setEnabled(len(tracks) > 0)
 
     def toggle_cover_visibility(self, checked):
         """Обрабатывает включение/выключение обложек."""
