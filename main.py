@@ -11,7 +11,7 @@ import qtawesome as qta
 import json
 from settings_dialog import SettingsDialog
 
-from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog, QListWidgetItem
+from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog, QListWidgetItem, QMessageBox, QProgressDialog, QInputDialog
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QTimer, QSize
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QProgressBar, QPushButton
@@ -355,25 +355,89 @@ class SpotifyApp(QObject):
             self.update_status("Ошибка при генерации рекомендаций.")
 
     def add_ai_tracks_to_playlist(self, track_ids: list[str]):
-        """Обрабатывает добавление AI треков в плейлист."""
-        print(f"Запрос на добавление треков: {track_ids}")
-        # Открываем стандартный диалог импорта, но без выбора файла
-        import_dialog = ImportDialog(self.playlists, self.window)
-        if import_dialog.exec():
-            settings = import_dialog.get_import_settings()
-            if settings:
-                target_id = settings['target']
-                if settings['mode'] == 'create':
-                    # Создаем плейлист, затем добавляем треки
-                    new_id = self.spotify_client.create_new_playlist(
-                        settings['target'])
-                    if new_id:
-                        self.run_long_task(self.spotify_client.add_tracks_to_playlist, lambda r: self.on_import_add_finished(
-                            len(track_ids), settings['target'], new_id), new_id, track_ids)
-                else:
-                    # Добавляем в существующий
-                    self.run_long_task(self.spotify_client.add_tracks_to_playlist, lambda r: self.on_import_add_finished(
-                        len(track_ids), "выбранный плейлист", target_id), target_id, track_ids)
+        """
+        Открывает диалог выбора плейлиста для добавления треков, рекомендованных AI.
+        """
+        if not track_ids:
+            return
+
+        # 1. Готовим список плейлистов для выбора, исключая "Понравившиеся"
+        existing_playlists = {p['name']: p['id']
+                              for p in self.playlists if p.get('id') != 'liked_songs'}
+        playlist_names = list(existing_playlists.keys())
+
+        create_new_option = "[Создать новый плейлист]"
+        choices = [create_new_option] + playlist_names
+
+        # 2. Показываем стандартный диалог Qt с выпадающим списком
+        playlist_name, ok = QInputDialog.getItem(
+            self.window,
+            "Добавить в плейлист",
+            "Выберите, куда добавить рекомендованные треки:",
+            choices, 0, False
+        )
+
+        # Если пользователь нажал "Отмена", ничего не делаем
+        if not ok or not playlist_name:
+            return
+
+        # 3. Определяем, что делать дальше, на основе выбора
+        params = {
+            "track_ids": track_ids,
+            "target_id": None,
+            "new_playlist_name": None
+        }
+        label_text = ""
+
+        if playlist_name == create_new_option:
+            # Если нужно создать новый, запрашиваем имя
+            new_name, ok = QInputDialog.getText(
+                self.window, "Создать плейлист", "Введите название нового плейлиста:")
+            if ok and new_name:
+                params["new_playlist_name"] = new_name
+                label_text = f"Создание плейлиста и добавление треков..."
+            else:
+                return  # Отмена ввода имени
+        else:
+            # Иначе берем ID существующего плейлиста
+            params["target_id"] = existing_playlists.get(playlist_name)
+            label_text = f"Добавление треков в '{playlist_name}'..."
+
+        # 4. Запускаем фоновую задачу
+        self.run_long_task(
+            self._add_tracks_worker,
+            lambda result: self.on_playlist_modified(
+                result['id'], message=result['message']),
+            params,
+            label_text=label_text
+        )
+
+    def _add_tracks_worker(self, params: dict, **kwargs) -> dict:
+        """
+        Рабочий метод: создает плейлист (если нужно) и добавляет в него треки.
+        """
+        track_ids = params['track_ids']
+        target_id = params['target_id']
+        new_name = params.get('new_playlist_name')
+
+        # Если нужно создать плейлист, создаем его первым
+        if new_name:
+            target_id = self.spotify_client.create_new_playlist(name=new_name)
+            if not target_id:
+                raise Exception(f"Не удалось создать плейлист '{new_name}'")
+
+        # Добавляем треки в целевой плейлист (новый или существующий)
+        if not target_id:
+            raise ValueError("Не был определен целевой плейлист.")
+
+        self.spotify_client.add_tracks_to_playlist(
+            playlist_id=target_id, track_ids=track_ids)
+
+        # Возвращаем ID измененного плейлиста и сообщение об успехе
+        return {
+            "id": target_id,
+            "message": f"Успешно добавлено {len(track_ids)} треков."
+        }
 
     def load_settings(self):
         """Загружает детальные настройки из файла."""
