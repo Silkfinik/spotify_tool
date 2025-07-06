@@ -2,7 +2,7 @@
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QLabel, QPlainTextEdit,
-    QPushButton, QTableWidget, QHeaderView, QComboBox, QFormLayout
+    QPushButton, QTableWidget, QHeaderView, QComboBox, QFormLayout, QCheckBox
 )
 from PyQt6.QtWidgets import QTableWidgetItem
 from PyQt6.QtCore import pyqtSignal, Qt
@@ -18,6 +18,7 @@ class AiDialog(QDialog):
     generate_from_playlist_requested = pyqtSignal(
         str, str)  # playlist_id, model_name
     change_api_key_requested = pyqtSignal()
+    show_all_models_toggled = pyqtSignal(bool)
     add_selected_to_playlist_requested = pyqtSignal(
         list)  # list of track dicts
 
@@ -30,6 +31,9 @@ class AiDialog(QDialog):
         main_layout = QVBoxLayout(self)
 
         # --- Верхняя панель с выбором модели и сменой ключа ---
+        self.show_all_models_checkbox = QCheckBox("Показать все")
+        self.show_all_models_checkbox.setToolTip(
+            "Показать полный список доступных моделей, включая экспериментальные")
         top_panel_layout = QHBoxLayout()
         top_panel_layout.addWidget(QLabel("Модель AI:"))
         self.model_combo = QComboBox()
@@ -39,6 +43,7 @@ class AiDialog(QDialog):
             self.model_combo.addItem("Модели не найдены")
             self.model_combo.setEnabled(False)
         top_panel_layout.addWidget(self.model_combo)
+        top_panel_layout.addWidget(self.show_all_models_checkbox)
         top_panel_layout.addStretch()
         self.change_key_button = QPushButton(
             qta.icon('fa5s.key', color='#E0E0E0'), " Сменить ключ API")
@@ -115,6 +120,8 @@ class AiDialog(QDialog):
         self.results_table.itemSelectionChanged.connect(
             self.update_add_button_state)
         self.change_key_button.clicked.connect(self.change_api_key_requested)
+        self.show_all_models_checkbox.toggled.connect(
+            self.show_all_models_toggled)
         self.add_to_playlist_button.clicked.connect(
             self.emit_add_selected_request)
         close_button.clicked.connect(self.accept)

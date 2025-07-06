@@ -9,6 +9,7 @@ from functools import partial
 from itertools import islice
 import qtawesome as qta
 import json
+from functools import partial
 from settings_dialog import SettingsDialog
 
 from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog, QListWidgetItem, QMessageBox, QProgressDialog, QInputDialog
@@ -244,12 +245,20 @@ class SpotifyApp(QObject):
         Вызывается после загрузки списка моделей и открывает главный диалог AI.
         """
         if not isinstance(models, list):
+            # Важно восстановить UI, если загрузка моделей не удалась
+            self.restore_ui()
             self.update_status("Не удалось загрузить список AI моделей.")
             return
 
-        # Создаем и показываем диалог, передав ему свежий список моделей
         dialog = AiDialog(self.playlists, models, self.window)
 
+        # --> ГЛАВНОЕ ИЗМЕНЕНИЕ: Подключаем сигнал от галочки <--
+        dialog.show_all_models_toggled.connect(
+            lambda checked: self._handle_show_all_models_toggle(
+                dialog, checked)
+        )
+
+        # ... (остальные подключения сигналов без изменений) ...
         dialog.generate_from_prompt_requested.connect(
             lambda p, m: self.handle_ai_generation(
                 dialog, prompt=p, model_name=m)
@@ -261,6 +270,7 @@ class SpotifyApp(QObject):
         dialog.add_selected_to_playlist_requested.connect(
             self.add_ai_tracks_to_playlist)
         dialog.change_api_key_requested.connect(self.prompt_for_api_key)
+
         dialog.exec()
 
     def prompt_for_api_key(self) -> bool:
@@ -513,6 +523,40 @@ class SpotifyApp(QObject):
                     "Настройки сохранены",
                     "Изменения вступят в силу после перезапуска приложения."
                 )
+
+    def _handle_show_all_models_toggle(self, dialog: AiDialog, checked: bool):
+        """
+        Запускает фоновую задачу для обновления списка моделей в диалоге.
+        """
+        self.update_status("Обновление списка моделей...")
+
+        # --> ИЗМЕНЕНИЕ: Создаем "частичную" функцию с уже "зашитым" в нее аргументом <--
+        target_fn = partial(
+            self.ai_assistant.list_supported_models, show_all=checked)
+
+        self.run_long_task(
+            target_fn,  # Передаем уже готовую функцию
+            lambda models: self._repopulate_ai_models_combo(dialog, models),
+            # Больше не нужно передавать здесь show_all, он уже внутри target_fn
+            label_text="Обновление списка моделей..."
+        )
+
+    def _repopulate_ai_models_combo(self, dialog: AiDialog, models: list):
+        """Очищает и заново заполняет выпадающий список моделей в диалоге."""
+        current_model = dialog.model_combo.currentText()
+        dialog.model_combo.clear()
+
+        if models:
+            dialog.model_combo.addItems(models)
+            # Пытаемся сохранить выбранную модель, если она есть в новом списке
+            if current_model in models:
+                dialog.model_combo.setCurrentText(current_model)
+            dialog.model_combo.setEnabled(True)
+        else:
+            dialog.model_combo.addItem("Модели не найдены")
+            dialog.model_combo.setEnabled(False)
+
+        self.update_status("Список моделей обновлен.")
 
     def load_cache(self):
         """Загружает кэш плейлистов и треков из файла."""

@@ -1,6 +1,7 @@
 # ai_assistant.py
 
 import os
+import re
 import google.generativeai as genai
 
 
@@ -69,27 +70,59 @@ class AIAssistant:
         )
         return self._generate(full_prompt, model_name)
 
-    def list_supported_models(self, **kwargs) -> list[str]:
+    # ai_assistant.py, внутри класса AIAssistant
+
+    def list_supported_models(self, show_all: bool = False, **kwargs) -> list[str]:
         """
-        Получает с серверов Google список актуальных и поддерживаемых моделей.
+        Получает список моделей и фильтрует его, если не включен режим show_all.
         """
         if not self.is_active:
             raise ConnectionError("AI-ассистент не был инициализирован.")
 
-        print("Запрос списка доступных AI моделей...")
-        supported_models = []
-        try:
-            for m in genai.list_models():
-                # Убеждаемся, что модель умеет генерировать контент
-                if 'generateContent' in m.supported_generation_methods:
-                    # Извлекаем короткое имя модели из пути 'models/gemini-1.5-pro-latest'
-                    model_name = m.name.split('/')[-1]
-                    supported_models.append(model_name)
+        print(f"Запрос списка AI моделей (Показать все: {show_all})...")
 
-            # Сортируем, чтобы 'pro' версии были вверху списка
-            supported_models.sort(key=lambda x: 'pro' not in x)
-            print(f"Найдены поддерживаемые модели: {supported_models}")
-            return supported_models
+        # Ключевые слова для исключения в стандартном режиме
+        EXCLUDE_KEYWORDS = {'vision', 'preview', 'exp',
+                            'lite', 'tts', 'thinking', 'code', 'gemma'}
+
+        all_models = []
+        try:
+            # Сначала получаем абсолютно все поддерживаемые модели
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    all_models.append(m.name.split('/')[-1])
+
+            # Если не стоит флаг "показать все", применяем наш умный фильтр
+            if not show_all:
+                filtered_models = []
+                for model_name in all_models:
+                    if any(keyword in model_name for keyword in EXCLUDE_KEYWORDS):
+                        continue
+                    is_numbered_version = model_name[-4:].startswith(
+                        '-') and model_name[-3:].isdigit()
+                    if is_numbered_version:
+                        continue
+                    filtered_models.append(model_name)
+                main_models = filtered_models
+            else:
+                main_models = all_models
+
+            # Сортируем итоговый список
+            def sort_key(name):
+                # ... (логика сортировки остается без изменений) ...
+                family_prio = 0 if 'gemini' in name else (
+                    1 if 'gemma' in name else 2)
+                tier_prio = 0 if 'pro' in name else (
+                    1 if 'flash' in name else 2)
+                latest_prio = 0 if 'latest' in name else 1
+                version_match = re.search(r'(\d\.\d|\d)', name)
+                version = float(version_match.group(1)) if version_match else 0
+                return (family_prio, -version, tier_prio, latest_prio)
+
+            main_models.sort(key=sort_key)
+
+            print(f"Итоговый список моделей для отображения: {main_models}")
+            return main_models
         except Exception as e:
             print(f"Не удалось получить список моделей: {e}")
-            return []  # Возвращаем пустой список в случае ошибки
+            return ['gemini-2.5-flash']
