@@ -206,8 +206,7 @@ class SpotifyApp(QObject):
             self.toggle_cover_visibility)
         self.window.settings_action.triggered.connect(
             self.open_settings_dialog)
-        self.window.ai_assistant_action.triggered.connect(
-            self.open_ai_assistant_dialog)
+        self.window.ai_button.clicked.connect(self.open_ai_assistant_dialog)
         self.window.show_covers_action.setChecked(
             self.settings.get('show_covers', False))
 
@@ -777,6 +776,7 @@ class SpotifyApp(QObject):
         self.window.login_button.setEnabled(False)
         self.window.refresh_button.setEnabled(True)
         self.window.cache_all_button.setEnabled(True)
+        self.window.ai_button.setEnabled(True)
         self.window.import_button.setEnabled(True)
         self.window.paste_text_button.setEnabled(True)
         self.spotify_client = SpotifyClient(self.auth_manager.sp_oauth)

@@ -23,12 +23,6 @@ class MainWindow(QMainWindow):
             "Показывать обложки", self, checkable=True)
         view_menu.addAction(self.show_covers_action)
 
-        # --> НОВОЕ: Создаем меню для AI <--
-        ai_menu = menu_bar.addMenu("AI Ассистент")
-        self.ai_assistant_action = QAction(
-            "Создать плейлист с помощью AI", self)
-        ai_menu.addAction(self.ai_assistant_action)
-
         view_menu.addSeparator()
 
         # 2. НОВЫЙ ПУНКТ МЕНЮ для вызова окна настроек
@@ -58,6 +52,12 @@ class MainWindow(QMainWindow):
         self.cache_all_button.setEnabled(False)
         self.import_button = QPushButton(
             qta.icon('fa5s.file-import', color='#E0E0E0'), "")
+
+        self.ai_button = QPushButton(
+            qta.icon('fa5s.magic', color='#E0E0E0'), "")
+        self.ai_button.setToolTip("AI Ассистент плейлистов")
+        self.ai_button.setEnabled(False)
+
         self.import_button.setToolTip("Импорт из файла...")
         self.import_button.setEnabled(False)
         self.paste_text_button = QPushButton(
@@ -71,6 +71,8 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.login_button)
         button_layout.addWidget(self.refresh_button)
         button_layout.addWidget(self.cache_all_button)
+        button_layout.addStretch()
+        button_layout.addWidget(self.ai_button)
         button_layout.addStretch()
         button_layout.addWidget(self.import_button)
         button_layout.addWidget(self.paste_text_button)
