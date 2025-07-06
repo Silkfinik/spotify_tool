@@ -9,6 +9,7 @@ from functools import partial
 from itertools import islice
 import qtawesome as qta
 import json
+from settings_dialog import SettingsDialog
 
 from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog, QListWidgetItem
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QTimer, QSize
@@ -27,6 +28,13 @@ from importer import parse_file
 from paste_text_dialog import PasteTextDialog
 
 import requests  # <-- ДОБАВЬТЕ ЭТОТ ИМПОРТ
+
+UI_SCALE_MAP = {0: 'small', 1: 'medium', 2: 'large'}
+UI_SCALE_CONFIG = {
+    'small': {'row_height': 36, 'font_size': 9},
+    'medium': {'row_height': 48, 'font_size': 11},
+    'large': {'row_height': 64, 'font_size': 12},
+}
 
 
 def has_internet_connection():
@@ -173,6 +181,8 @@ class SpotifyApp(QObject):
         self.status_cancel_button.hide()
         self.status_cancel_button.clicked.connect(self.cancel_task)
 
+        self.apply_startup_settings()
+
         # Подключение сигналов к слотам (методам)
         self.window.login_button.clicked.connect(self.start_login)
         self.window.refresh_button.clicked.connect(self.load_user_playlists)
@@ -193,34 +203,76 @@ class SpotifyApp(QObject):
         self.window.search_bar.returnPressed.connect(
             self.search_and_display_tracks)
         self.window.show_covers_action.toggled.connect(
-            self.toggle_cover_visibility)  # <-- НОВЫЙ СИГНАЛ
+            self.toggle_cover_visibility)
+        self.window.settings_action.triggered.connect(
+            self.open_settings_dialog)
         self.window.show_covers_action.setChecked(
             self.settings.get('show_covers', False))
 
     def load_settings(self):
-        """Загружает настройки из файла settings.json."""
+        """Загружает настройки из файла."""
+        defaults = {'show_covers': False, 'ui_scale_value': 1}  # 1 = medium
         if not os.path.exists(self.settings_file):
-            # Если файла нет, используем настройки по умолчанию
-            self.settings = {'show_covers': False}
+            self.settings = defaults
             return
         try:
             with open(self.settings_file, 'r', encoding='utf-8') as f:
                 self.settings = json.load(f)
-        except (json.JSONDecodeError, IOError):
-            # В случае ошибки чтения, используем настройки по умолчанию
-            self.settings = {'show_covers': False}
+            # Убедимся, что все ключи на месте
+            if 'ui_scale_value' not in self.settings:
+                self.settings['ui_scale_value'] = defaults['ui_scale_value']
+        except Exception:
+            self.settings = defaults
 
     def save_settings(self):
         """Сохраняет текущие настройки в файл."""
         try:
-            # Обновляем настройку перед сохранением, беря актуальное состояние галочки
+            # Обновляем настройку перед сохранением
             self.settings['show_covers'] = self.window.show_covers_action.isChecked()
+            # `ui_scale_value` уже обновлен в self.settings при нажатии "Ок" в диалоге
 
             with open(self.settings_file, 'w', encoding='utf-8') as f:
                 json.dump(self.settings, f, indent=4)
-            print("Настройки успешно сохранены.")
+            print("Настройки сохранены.")
         except IOError as e:
             print(f"Ошибка сохранения настроек: {e}")
+
+    # --> НОВЫЙ МЕТОД, который применяется только при старте <--
+    def apply_startup_settings(self):
+        """Применяет настройки к интерфейсу ОДИН РАЗ при запуске."""
+        show_covers = self.settings.get('show_covers', False)
+        self.window.show_covers_action.setChecked(show_covers)
+        self.window.track_table.setColumnHidden(0, not show_covers)
+
+        scale_value = self.settings.get('ui_scale_value', 1)
+        scale_name = UI_SCALE_MAP.get(scale_value, 'medium')
+        config = UI_SCALE_CONFIG.get(scale_name, UI_SCALE_CONFIG['medium'])
+
+        app_font = QApplication.font()
+        app_font.setPointSize(config['font_size'])
+        QApplication.setFont(app_font)
+
+        self.window.track_table.verticalHeader(
+        ).setDefaultSectionSize(config['row_height'])
+        self.window.track_table.setColumnWidth(0, config['row_height'])
+        self.window.track_table.setIconSize(
+            QSize(config['row_height'], config['row_height']))
+
+    # --> НОВЫЙ МЕТОД для вызова окна настроек <--
+    def open_settings_dialog(self):
+        """Открывает диалог настроек вида."""
+        current_scale = self.settings.get('ui_scale_value', 1)
+        dialog = SettingsDialog(current_scale, self.window)
+
+        if dialog.exec():
+            new_scale = dialog.get_selected_scale_value()
+            if new_scale != current_scale:
+                self.settings['ui_scale_value'] = new_scale
+                QMessageBox.information(
+                    self.window,
+                    "Настройки сохранены",
+                    "Изменения размера вступят в силу после перезапуска приложения."
+                )
 
     def load_cache(self):
         """Загружает кэш плейлистов и треков из файла."""
@@ -1139,22 +1191,13 @@ class SpotifyApp(QObject):
             self.window.export_button.setEnabled(len(tracks) > 0)
 
     def toggle_cover_visibility(self, checked):
-        """
-        Включает/выключает показ обложек и запускает их загрузку при включении.
-        """
+        """Обрабатывает включение/выключение обложек."""
+        # Просто сохраняем настройку. Применение размера происходит при перезапуске
+        self.settings['show_covers'] = checked
         self.window.track_table.setColumnHidden(0, not checked)
-
-        # Если поставили галочку - запускаем полную проверку и загрузку всех недостающих обложек
         if checked:
-            self.run_long_task(
-                self._download_covers_worker,
-                self.on_covers_downloaded,
-                label_text="Загрузка недостающих обложек..."
-            )
-        # Если сняли галочку - просто обновляем текущий вид, чтобы скрыть иконки.
-        # Это будет мгновенно, так как данные уже в кэше.
-        else:
-            self.refresh_track_view()
+            self.run_long_task(self._download_covers_worker,
+                               self.on_covers_downloaded, label_text="Загрузка обложек...")
 
     def _download_covers_worker(self, cancellation_check=None, progress_callback=None, **kwargs):
         """Рабочий метод: скачивает недостающие обложки для всех треков в кэше."""

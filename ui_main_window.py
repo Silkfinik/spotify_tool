@@ -23,6 +23,12 @@ class MainWindow(QMainWindow):
             "Показывать обложки", self, checkable=True)
         view_menu.addAction(self.show_covers_action)
 
+        view_menu.addSeparator()
+
+        # 2. НОВЫЙ ПУНКТ МЕНЮ для вызова окна настроек
+        self.settings_action = QAction("Настройки вида...", self)
+        view_menu.addAction(self.settings_action)
+
         # Создаем единый центральный виджет
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
