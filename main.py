@@ -142,12 +142,16 @@ class SpotifyApp(QObject):
 
         self.cache_file = os.path.join('.app_cache', 'cache.json')
         self.covers_dir = os.path.join('.app_cache', 'covers')
+        self.settings_file = os.path.join('.app_cache', 'settings.json')
+        self.settings = {}
+        self.load_settings()
 
         # Инициализируем кэши
         self.playlist_cache = {}
         self.track_cache = {}
 
         # --> НОВОЕ: Загружаем кэш из файла при запуске <--
+
         self.load_cache()
 
         self.thread = None
@@ -190,6 +194,33 @@ class SpotifyApp(QObject):
             self.search_and_display_tracks)
         self.window.show_covers_action.toggled.connect(
             self.toggle_cover_visibility)  # <-- НОВЫЙ СИГНАЛ
+        self.window.show_covers_action.setChecked(
+            self.settings.get('show_covers', False))
+
+    def load_settings(self):
+        """Загружает настройки из файла settings.json."""
+        if not os.path.exists(self.settings_file):
+            # Если файла нет, используем настройки по умолчанию
+            self.settings = {'show_covers': False}
+            return
+        try:
+            with open(self.settings_file, 'r', encoding='utf-8') as f:
+                self.settings = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            # В случае ошибки чтения, используем настройки по умолчанию
+            self.settings = {'show_covers': False}
+
+    def save_settings(self):
+        """Сохраняет текущие настройки в файл."""
+        try:
+            # Обновляем настройку перед сохранением, беря актуальное состояние галочки
+            self.settings['show_covers'] = self.window.show_covers_action.isChecked()
+
+            with open(self.settings_file, 'w', encoding='utf-8') as f:
+                json.dump(self.settings, f, indent=4)
+            print("Настройки успешно сохранены.")
+        except IOError as e:
+            print(f"Ошибка сохранения настроек: {e}")
 
     def load_cache(self):
         """Загружает кэш плейлистов и треков из файла."""
@@ -1362,6 +1393,7 @@ if __name__ == '__main__':
 
     # --> НОВОЕ: Подключаем сохранение кэша к сигналу о выходе <--
     app.aboutToQuit.connect(spotify_app.save_cache)
+    app.aboutToQuit.connect(spotify_app.save_settings)
 
     if spotify_app.auth_manager.get_cached_token():
         print("Обнаружен кешированный токен, автоматический вход...")
