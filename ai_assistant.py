@@ -68,3 +68,28 @@ class AIAssistant:
             f"{track_list_str}"
         )
         return self._generate(full_prompt, model_name)
+
+    def list_supported_models(self, **kwargs) -> list[str]:
+        """
+        Получает с серверов Google список актуальных и поддерживаемых моделей.
+        """
+        if not self.is_active:
+            raise ConnectionError("AI-ассистент не был инициализирован.")
+
+        print("Запрос списка доступных AI моделей...")
+        supported_models = []
+        try:
+            for m in genai.list_models():
+                # Убеждаемся, что модель умеет генерировать контент
+                if 'generateContent' in m.supported_generation_methods:
+                    # Извлекаем короткое имя модели из пути 'models/gemini-1.5-pro-latest'
+                    model_name = m.name.split('/')[-1]
+                    supported_models.append(model_name)
+
+            # Сортируем, чтобы 'pro' версии были вверху списка
+            supported_models.sort(key=lambda x: 'pro' not in x)
+            print(f"Найдены поддерживаемые модели: {supported_models}")
+            return supported_models
+        except Exception as e:
+            print(f"Не удалось получить список моделей: {e}")
+            return []  # Возвращаем пустой список в случае ошибки

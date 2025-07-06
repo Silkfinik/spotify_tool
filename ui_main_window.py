@@ -23,6 +23,12 @@ class MainWindow(QMainWindow):
             "Показывать обложки", self, checkable=True)
         view_menu.addAction(self.show_covers_action)
 
+        # --> НОВОЕ: Создаем меню для AI <--
+        ai_menu = menu_bar.addMenu("AI Ассистент")
+        self.ai_assistant_action = QAction(
+            "Создать плейлист с помощью AI", self)
+        ai_menu.addAction(self.ai_assistant_action)
+
         view_menu.addSeparator()
 
         # 2. НОВЫЙ ПУНКТ МЕНЮ для вызова окна настроек

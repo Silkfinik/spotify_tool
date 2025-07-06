@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QLabel, QPlainTextEdit,
     QPushButton, QTableWidget, QHeaderView, QComboBox, QFormLayout
 )
+from PyQt6.QtWidgets import QTableWidgetItem
 from PyQt6.QtCore import pyqtSignal, Qt
 import qtawesome as qta
 
@@ -20,7 +21,7 @@ class AiDialog(QDialog):
     add_selected_to_playlist_requested = pyqtSignal(
         list)  # list of track dicts
 
-    def __init__(self, playlists: list[dict], parent=None):
+    def __init__(self, playlists: list[dict], available_models: list[str], parent=None):
         super().__init__(parent)
         self.setWindowTitle("AI Ассистент плейлистов")
         self.setMinimumSize(700, 600)
@@ -32,8 +33,11 @@ class AiDialog(QDialog):
         top_panel_layout = QHBoxLayout()
         top_panel_layout.addWidget(QLabel("Модель AI:"))
         self.model_combo = QComboBox()
-        self.model_combo.addItems(
-            ['gemini-pro', 'gemini-1.5-flash'])  # Доступные модели
+        if available_models:
+            self.model_combo.addItems(available_models)
+        else:
+            self.model_combo.addItem("Модели не найдены")
+            self.model_combo.setEnabled(False)
         top_panel_layout.addWidget(self.model_combo)
         top_panel_layout.addStretch()
         self.change_key_button = QPushButton(
@@ -130,17 +134,32 @@ class AiDialog(QDialog):
             self.lock_ui_for_generation()
 
     def emit_add_selected_request(self):
-        """Собирает данные выделенных треков и отправляет сигнал."""
+        """Собирает ID выделенных треков и отправляет сигнал."""
         selected_rows = sorted(list(set(item.row()
                                for item in self.results_table.selectedItems())))
-        tracks_to_add = []
+        track_ids_to_add = []
         for row in selected_rows:
-            artist = self.results_table.item(row, 0).text()
-            name = self.results_table.item(row, 1).text()
-            tracks_to_add.append({'artist': artist, 'name': name})
+            # Получаем ID, сохраненный в ячейке с названием трека
+            id_item = self.results_table.item(row, 1)
+            if id_item and id_item.data(Qt.ItemDataRole.UserRole):
+                track_ids_to_add.append(id_item.data(Qt.ItemDataRole.UserRole))
 
-        if tracks_to_add:
-            self.add_selected_to_playlist_requested.emit(tracks_to_add)
+        if track_ids_to_add:
+            self.add_selected_to_playlist_requested.emit(track_ids_to_add)
+
+    # --> НОВЫЙ МЕТОД для заполнения таблицы <--
+    def populate_results_table(self, tracks: list[dict]):
+        """Заполняет таблицу результатами от AI."""
+        self.results_table.setRowCount(0)
+        self.results_table.setRowCount(len(tracks))
+        for i, track in enumerate(tracks):
+            artist_item = QTableWidgetItem(track['artist'])
+            name_item = QTableWidgetItem(track['name'])
+            # Сохраняем ID трека в данных ячейки, чтобы потом его использовать
+            name_item.setData(Qt.ItemDataRole.UserRole, track.get('id'))
+
+            self.results_table.setItem(i, 0, artist_item)
+            self.results_table.setItem(i, 1, name_item)
 
     def lock_ui_for_generation(self):
         """Блокирует UI на время работы AI."""

@@ -30,6 +30,10 @@ from paste_text_dialog import PasteTextDialog
 
 import requests  # <-- ДОБАВЬТЕ ЭТОТ ИМПОРТ
 
+from ai_assistant import AIAssistant
+from api_key_dialog import ApiKeyDialog
+from ai_dialog import AiDialog
+
 
 def has_internet_connection():
     """
@@ -137,6 +141,7 @@ class SpotifyApp(QObject):
 
         self.window = MainWindow()
         self.spotify_client = None
+        self.ai_assistant = None
         self.playlists = []
         self.current_playlist_id = None
         self.current_playlist_name = ""
@@ -200,12 +205,180 @@ class SpotifyApp(QObject):
             self.toggle_cover_visibility)
         self.window.settings_action.triggered.connect(
             self.open_settings_dialog)
+        self.window.ai_assistant_action.triggered.connect(
+            self.open_ai_assistant_dialog)
         self.window.show_covers_action.setChecked(
             self.settings.get('show_covers', False))
+
+    # --- Логика AI Ассистента ---
+
+    def open_ai_assistant_dialog(self):
+        """
+        Инициирует открытие AI ассистента, предварительно загружая список моделей.
+        """
+        if not self.spotify_client:
+            return self.update_status("Сначала войдите в Spotify.")
+
+        api_key = self.settings.get('gemini_api_key')
+        if not api_key:
+            if not self.prompt_for_api_key():
+                return
+            api_key = self.settings.get('gemini_api_key')
+
+        try:
+            # Инициализируем ассистента здесь, один раз перед запросами
+            self.ai_assistant = AIAssistant(api_key)
+        except Exception as e:
+            self.update_status(f"Ошибка инициализации AI: {e}")
+            return
+
+        # Запускаем фоновую задачу на получение списка моделей
+        self.run_long_task(
+            self.ai_assistant.list_supported_models,
+            self._on_ai_models_loaded,  # Новый слот-обработчик
+            label_text="Получение списка AI моделей..."
+        )
+
+    def _on_ai_models_loaded(self, models: list):
+        """
+        Вызывается после загрузки списка моделей и открывает главный диалог AI.
+        """
+        if not isinstance(models, list):
+            self.update_status("Не удалось загрузить список AI моделей.")
+            return
+
+        # Создаем и показываем диалог, передав ему свежий список моделей
+        dialog = AiDialog(self.playlists, models, self.window)
+
+        dialog.generate_from_prompt_requested.connect(
+            lambda p, m: self.handle_ai_generation(
+                dialog, prompt=p, model_name=m)
+        )
+        dialog.generate_from_playlist_requested.connect(
+            lambda pid, m: self.handle_ai_generation(
+                dialog, playlist_id=pid, model_name=m)
+        )
+        dialog.add_selected_to_playlist_requested.connect(
+            self.add_ai_tracks_to_playlist)
+        dialog.change_api_key_requested.connect(self.prompt_for_api_key)
+        dialog.exec()
+
+    def prompt_for_api_key(self) -> bool:
+        """Открывает диалог для ввода/смены ключа API."""
+        current_key = self.settings.get('gemini_api_key', "")
+        dialog = ApiKeyDialog(current_key, self.window)
+        if dialog.exec():
+            new_key = dialog.get_api_key()
+            if new_key:
+                self.settings['gemini_api_key'] = new_key
+                self.save_settings()  # Сразу сохраняем
+                self.update_status("Ключ API успешно сохранен.")
+                return True
+        return False
+
+    def handle_ai_generation(self, dialog: AiDialog, **kwargs):
+        """Инициирует фоновую задачу для генерации и поиска треков."""
+        self.run_long_task(
+            self._ai_generation_worker,
+            lambda r: self.on_ai_generation_finished(dialog, r),
+            kwargs,  # Передаем все аргументы (prompt, playlist_id, model_name)
+            label_text="Обращение к AI..."
+        )
+
+    def _ai_generation_worker(self, ai_params: dict, **kwargs) -> list:
+        """Рабочий метод: общается с AI, ищет треки в Spotify."""
+        # 1. Инициализируем ассистента с ключом
+        api_key = self.settings.get('gemini_api_key')
+        if not api_key:
+            raise ValueError("Ключ API Gemini не найден.")
+        self.ai_assistant = AIAssistant(api_key)
+
+        recommendations = []
+        model_name = ai_params.get('model_name')
+
+        # --- Логика для разных режимов AI ---
+        if 'prompt' in ai_params:
+            recommendations = self.ai_assistant.get_recommendations_from_prompt(
+                ai_params['prompt'], model_name
+            )
+        elif 'playlist_id' in ai_params:
+            # --> НАЧАЛО ИСПРАВЛЕНИЯ <--
+            # Используем "умную" загрузку, чтобы получить данные о треках
+            playlist_id = ai_params['playlist_id']
+
+            # 1. Получаем все ID треков из плейлиста
+            track_ids = self.spotify_client.get_playlist_track_ids(playlist_id)
+
+            # 2. Находим, для каких треков у нас еще нет данных в кэше
+            new_ids_to_fetch = [
+                tid for tid in track_ids if tid not in self.track_cache]
+
+            # 3. Если есть новые треки, догружаем их детали и обновляем кэш
+            if new_ids_to_fetch:
+                new_details = self.spotify_client.get_tracks_details(
+                    new_ids_to_fetch)
+                self.track_cache.update(new_details)
+
+            # 4. Собираем полный список данных о треках из нашего кэша
+            playlist_tracks = [self.track_cache[tid]
+                               for tid in track_ids if tid in self.track_cache]
+
+            # 5. Отправляем готовые данные в AI для анализа
+            recommendations = self.ai_assistant.get_recommendations_from_playlist(
+                playlist_tracks, model_name
+            )
+            # --> КОНЕЦ ИСПРАВЛЕНИЯ <--
+
+        if not recommendations:
+            raise ValueError("AI не вернул рекомендации.")
+
+        # Ищем каждый рекомендованный трек в Spotify
+        found_tracks = []
+        for query in recommendations:
+            track_id = self.spotify_client.find_track_id(query)
+            if track_id:
+                parts = query.split(' - ', 1)
+                artist = parts[0]
+                name = parts[1] if len(parts) > 1 else ""
+                found_tracks.append(
+                    {'id': track_id, 'artist': artist, 'name': name})
+
+        return found_tracks
+
+    def on_ai_generation_finished(self, dialog: AiDialog, tracks: list):
+        """Вызывается после завершения работы AI, обновляет UI диалога."""
+        dialog.unlock_ui_after_generation()
+        if isinstance(tracks, list):
+            dialog.populate_results_table(tracks)
+            self.update_status(f"AI предложил {len(tracks)} треков.")
+        else:
+            self.update_status("Ошибка при генерации рекомендаций.")
+
+    def add_ai_tracks_to_playlist(self, track_ids: list[str]):
+        """Обрабатывает добавление AI треков в плейлист."""
+        print(f"Запрос на добавление треков: {track_ids}")
+        # Открываем стандартный диалог импорта, но без выбора файла
+        import_dialog = ImportDialog(self.playlists, self.window)
+        if import_dialog.exec():
+            settings = import_dialog.get_import_settings()
+            if settings:
+                target_id = settings['target']
+                if settings['mode'] == 'create':
+                    # Создаем плейлист, затем добавляем треки
+                    new_id = self.spotify_client.create_new_playlist(
+                        settings['target'])
+                    if new_id:
+                        self.run_long_task(self.spotify_client.add_tracks_to_playlist, lambda r: self.on_import_add_finished(
+                            len(track_ids), settings['target'], new_id), new_id, track_ids)
+                else:
+                    # Добавляем в существующий
+                    self.run_long_task(self.spotify_client.add_tracks_to_playlist, lambda r: self.on_import_add_finished(
+                        len(track_ids), "выбранный плейлист", target_id), target_id, track_ids)
 
     def load_settings(self):
         """Загружает детальные настройки из файла."""
         defaults = {
+            'gemini_api_key': '',
             'show_covers': False,
             'sidebar_font_size': 10,
             'table_font_size': 11,
