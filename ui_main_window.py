@@ -56,6 +56,10 @@ class MainWindow(QMainWindow):
         self.cache_all_button.setEnabled(False)
         self.import_button = QPushButton(
             qta.icon('fa5s.file-import', color='#E0E0E0'), "")
+        # --> НОВАЯ КНОПКА <--
+        self.clear_cache_button = QPushButton(
+            qta.icon('fa5s.trash-alt', color='#E0E0E0'), "")
+        self.clear_cache_button.setToolTip("Очистить кэш приложения")
 
         self.ai_button = QPushButton(
             qta.icon('fa5s.magic', color='#E0E0E0'), "")
@@ -75,6 +79,7 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.login_button)
         button_layout.addWidget(self.refresh_button)
         button_layout.addWidget(self.cache_all_button)
+        button_layout.addWidget(self.clear_cache_button)
         button_layout.addStretch()
         button_layout.addWidget(self.ai_button)
         button_layout.addStretch()

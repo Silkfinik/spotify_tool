@@ -224,6 +224,7 @@ class SpotifyApp(QObject):
         self.window.login_button.clicked.connect(self.start_login)
         self.window.refresh_button.clicked.connect(self.load_user_playlists)
         self.window.cache_all_button.clicked.connect(self.cache_all_playlists)
+        self.window.clear_cache_button.clicked.connect(self.clear_cache)
         self.code_received_signal.connect(self.process_auth_code)
         self.window.playlist_list.itemClicked.connect(
             self.display_tracks_from_playlist)
@@ -251,6 +252,41 @@ class SpotifyApp(QObject):
             self.settings.get('show_covers', False))
 
         QTimer.singleShot(100, self.show_welcome_dialog)
+
+    def clear_cache(self):
+        """
+        Показывает диалог подтверждения и очищает кэш, если пользователь согласен.
+        """
+        reply = QMessageBox.question(
+            self.window,
+            "Очистка кэша",
+            "Вы уверены, что хотите очистить весь кэш приложения?\n"
+            "Это удалит все сохраненные данные о плейлистах и обложки. "
+            "Настройки вида и API ключ затронуты не будут.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # Очищаем кэши в памяти
+            self.playlist_cache.clear()
+            self.track_cache.clear()
+
+            # Удаляем файлы кэша с диска
+            if os.path.exists(self.cache_file):
+                os.remove(self.cache_file)
+                print("Файл кэша плейлистов удален.")
+
+            if os.path.exists(self.covers_dir):
+                import shutil
+                shutil.rmtree(self.covers_dir)
+                os.makedirs(self.covers_dir)  # Создаем папку заново
+                print("Папка с обложками очищена.")
+
+            # Обновляем интерфейс
+            self.window.playlist_list.clear()
+            self.window.track_table.setRowCount(0)
+            self.update_status("Кэш успешно очищен.")
 
     # --- Логика AI Ассистента ---
 
