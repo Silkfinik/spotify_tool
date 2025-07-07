@@ -2,7 +2,7 @@
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QLabel, QPlainTextEdit,
-    QPushButton, QTableWidget, QHeaderView, QComboBox, QFormLayout, QCheckBox
+    QPushButton, QTableWidget, QHeaderView, QComboBox, QFormLayout, QCheckBox, QLineEdit
 )
 from PyQt6.QtWidgets import QTableWidgetItem
 from PyQt6.QtCore import pyqtSignal, Qt
@@ -14,9 +14,10 @@ class AiDialog(QDialog):
     Диалоговое окно для взаимодействия с AI-ассистентом.
     """
     # Сигналы, которые окно будет отправлять в основной код
-    generate_from_prompt_requested = pyqtSignal(str, str)  # prompt, model_name
-    generate_from_playlist_requested = pyqtSignal(
-        str, str)  # playlist_id, model_name
+    generate_from_prompt_requested = pyqtSignal(
+        str, str, int)  # prompt, model_name, num_tracks
+    # playlist_id, model_name, num_tracks, refining_prompt
+    generate_from_playlist_requested = pyqtSignal(str, str, int, str)
     change_api_key_requested = pyqtSignal()
     show_all_models_toggled = pyqtSignal(bool)
     add_selected_to_playlist_requested = pyqtSignal(
@@ -53,31 +54,49 @@ class AiDialog(QDialog):
         # --- Вкладки ---
         tabs = QTabWidget()
 
-        # Вкладка 1: Генерация по тексту
+        # --- Вкладка 1: Генерация по тексту ---
         prompt_tab = QWidget()
-        prompt_layout = QVBoxLayout(prompt_tab)
-        prompt_label = QLabel(
-            "Опишите плейлист, который вы хотите получить (настроение, жанр, похожие исполнители):")
+        prompt_layout = QFormLayout(prompt_tab)
+
         self.prompt_edit = QPlainTextEdit()
         self.prompt_edit.setPlaceholderText(
-            "например: энергичная рок-музыка для тренировки в зале, похожая на AC/DC")
+            "например: энергичная рок-музыка для тренировки в зале")
+
+        self.prompt_num_tracks_combo = QComboBox()
+        self.prompt_num_tracks_combo.addItems(
+            [str(i) for i in range(5, 31, 5)])  # 5, 10, 15... 30
+
         self.generate_from_prompt_button = QPushButton(
             "Сгенерировать по описанию")
-        prompt_layout.addWidget(prompt_label)
-        prompt_layout.addWidget(self.prompt_edit)
-        prompt_layout.addWidget(self.generate_from_prompt_button)
+
+        prompt_layout.addRow("Опишите плейлист:", self.prompt_edit)
+        prompt_layout.addRow("Количество треков:",
+                             self.prompt_num_tracks_combo)
+        prompt_layout.addRow(self.generate_from_prompt_button)
         tabs.addTab(prompt_tab, "Создать по описанию")
 
-        # Вкладка 2: Поиск похожих
+        # --- Вкладка 2: Поиск похожих ---
         similar_tab = QWidget()
         similar_layout = QFormLayout(similar_tab)
-        similar_label = QLabel("Выберите плейлист, чтобы найти похожие треки:")
+
         self.playlist_combo = QComboBox()
         for p in playlists:
             self.playlist_combo.addItem(p['name'], p['id'])
+
+        self.refining_prompt_edit = QLineEdit()
+        self.refining_prompt_edit.setPlaceholderText(
+            "(необязательно) например: добавь больше женского вокала")
+
+        self.similar_num_tracks_combo = QComboBox()
+        self.similar_num_tracks_combo.addItems(
+            [str(i) for i in range(5, 31, 5)])
+
         self.generate_from_playlist_button = QPushButton("Найти похожие")
-        similar_layout.addRow(similar_label)
-        similar_layout.addRow("Плейлист:", self.playlist_combo)
+
+        similar_layout.addRow("Выберите плейлист:", self.playlist_combo)
+        similar_layout.addRow("Уточняющий запрос:", self.refining_prompt_edit)
+        similar_layout.addRow("Количество треков:",
+                              self.similar_num_tracks_combo)
         similar_layout.addRow(self.generate_from_playlist_button)
         tabs.addTab(similar_tab, "Найти похожие")
 
@@ -129,15 +148,20 @@ class AiDialog(QDialog):
     def emit_prompt_request(self):
         prompt_text = self.prompt_edit.toPlainText().strip()
         model_name = self.model_combo.currentText()
+        num_tracks = int(self.prompt_num_tracks_combo.currentText())
         if prompt_text:
-            self.generate_from_prompt_requested.emit(prompt_text, model_name)
+            self.generate_from_prompt_requested.emit(
+                prompt_text, model_name, num_tracks)
             self.lock_ui_for_generation()
 
     def emit_playlist_request(self):
         playlist_id = self.playlist_combo.currentData()
         model_name = self.model_combo.currentText()
+        num_tracks = int(self.similar_num_tracks_combo.currentText())
+        refining_prompt = self.refining_prompt_edit.text().strip()
         if playlist_id:
-            self.generate_from_playlist_requested.emit(playlist_id, model_name)
+            self.generate_from_playlist_requested.emit(
+                playlist_id, model_name, num_tracks, refining_prompt)
             self.lock_ui_for_generation()
 
     def emit_add_selected_request(self):

@@ -240,35 +240,33 @@ class SpotifyApp(QObject):
         )
 
     def _on_ai_models_loaded(self, models: list):
-        """
-        Вызывается после загрузки списка моделей и открывает главный диалог AI.
-        """
+        """Вызывается после загрузки списка моделей и открывает главный диалог AI."""
         if not isinstance(models, list):
-            # Важно восстановить UI, если загрузка моделей не удалась
             self.restore_ui()
             self.update_status("Не удалось загрузить список AI моделей.")
             return
 
         dialog = AiDialog(self.playlists, models, self.window)
 
-        # --> ГЛАВНОЕ ИЗМЕНЕНИЕ: Подключаем сигнал от галочки <--
+        # --> ИЗМЕНЕНИЕ: Подключаем новые, более сложные сигналы <--
+        dialog.generate_from_prompt_requested.connect(
+            lambda prompt, model, num: self.handle_ai_generation(
+                dialog, prompt=prompt, model_name=model, num_tracks=num
+            )
+        )
+        dialog.generate_from_playlist_requested.connect(
+            lambda p_id, model, num, ref_prompt: self.handle_ai_generation(
+                dialog, playlist_id=p_id, model_name=model, num_tracks=num, refining_prompt=ref_prompt
+            )
+        )
+
+        dialog.add_selected_to_playlist_requested.connect(
+            self.add_ai_tracks_to_playlist)
+        dialog.change_api_key_requested.connect(self.prompt_for_api_key)
         dialog.show_all_models_toggled.connect(
             lambda checked: self._handle_show_all_models_toggle(
                 dialog, checked)
         )
-
-        # ... (остальные подключения сигналов без изменений) ...
-        dialog.generate_from_prompt_requested.connect(
-            lambda p, m: self.handle_ai_generation(
-                dialog, prompt=p, model_name=m)
-        )
-        dialog.generate_from_playlist_requested.connect(
-            lambda pid, m: self.handle_ai_generation(
-                dialog, playlist_id=pid, model_name=m)
-        )
-        dialog.add_selected_to_playlist_requested.connect(
-            self.add_ai_tracks_to_playlist)
-        dialog.change_api_key_requested.connect(self.prompt_for_api_key)
 
         dialog.exec()
 
@@ -296,52 +294,32 @@ class SpotifyApp(QObject):
 
     def _ai_generation_worker(self, ai_params: dict, **kwargs) -> list:
         """Рабочий метод: общается с AI, ищет треки в Spotify."""
-        # 1. Инициализируем ассистента с ключом
         api_key = self.settings.get('gemini_api_key')
         if not api_key:
             raise ValueError("Ключ API Gemini не найден.")
         self.ai_assistant = AIAssistant(api_key)
 
         recommendations = []
+        # --> ИЗМЕНЕНИЕ: Извлекаем все новые параметры <--
         model_name = ai_params.get('model_name')
+        num_tracks = ai_params.get('num_tracks', 15)
 
-        # --- Логика для разных режимов AI ---
         if 'prompt' in ai_params:
             recommendations = self.ai_assistant.get_recommendations_from_prompt(
-                ai_params['prompt'], model_name
+                ai_params['prompt'], model_name, num_tracks
             )
         elif 'playlist_id' in ai_params:
-            # --> НАЧАЛО ИСПРАВЛЕНИЯ <--
-            # Используем "умную" загрузку, чтобы получить данные о треках
-            playlist_id = ai_params['playlist_id']
-
-            # 1. Получаем все ID треков из плейлиста
-            track_ids = self.spotify_client.get_playlist_track_ids(playlist_id)
-
-            # 2. Находим, для каких треков у нас еще нет данных в кэше
-            new_ids_to_fetch = [
-                tid for tid in track_ids if tid not in self.track_cache]
-
-            # 3. Если есть новые треки, догружаем их детали и обновляем кэш
-            if new_ids_to_fetch:
-                new_details = self.spotify_client.get_tracks_details(
-                    new_ids_to_fetch)
-                self.track_cache.update(new_details)
-
-            # 4. Собираем полный список данных о треках из нашего кэша
-            playlist_tracks = [self.track_cache[tid]
-                               for tid in track_ids if tid in self.track_cache]
-
-            # 5. Отправляем готовые данные в AI для анализа
+            refining_prompt = ai_params.get('refining_prompt', "")
+            playlist_tracks = self.spotify_client.get_playlist_tracks(
+                ai_params['playlist_id'])
             recommendations = self.ai_assistant.get_recommendations_from_playlist(
-                playlist_tracks, model_name
+                playlist_tracks, model_name, num_tracks, refining_prompt
             )
-            # --> КОНЕЦ ИСПРАВЛЕНИЯ <--
 
         if not recommendations:
             raise ValueError("AI не вернул рекомендации.")
 
-        # Ищем каждый рекомендованный трек в Spotify
+        # Поиск каждого трека (этот блок без изменений)
         found_tracks = []
         for query in recommendations:
             track_id = self.spotify_client.find_track_id(query)
