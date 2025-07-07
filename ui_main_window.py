@@ -25,6 +25,10 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
 
+        # --> НОВОЕ: Создаем меню "Справка" <--
+        self.help_action = QAction("Справка", self)
+        menu_bar.addAction(self.help_action)
+
         # 2. НОВЫЙ ПУНКТ МЕНЮ для вызова окна настроек
         self.settings_action = QAction("Настройки вида...", self)
         view_menu.addAction(self.settings_action)

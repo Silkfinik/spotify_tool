@@ -11,6 +11,7 @@ import qtawesome as qta
 import json
 from functools import partial
 from settings_dialog import SettingsDialog
+from welcome_dialog import WelcomeDialog
 
 from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog, QListWidgetItem, QMessageBox, QProgressDialog, QInputDialog, QLabel
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QTimer, QSize
@@ -21,7 +22,7 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtGui import QPixmap, QPainter, QPainterPath
 
 from ui_main_window import MainWindow
-from auth_manager import AuthManager
+from auth_manager import AuthManager, REDIRECT_URI
 from spotify_client import SpotifyClient
 from exporter import export_to_csv, export_to_json, export_to_txt
 from export_dialog import ExportDialog
@@ -242,9 +243,14 @@ class SpotifyApp(QObject):
             self.toggle_cover_visibility)
         self.window.settings_action.triggered.connect(
             self.open_settings_dialog)
+        self.window.help_action.triggered.connect(
+            lambda: self.show_welcome_dialog(force_show=True)
+        )
         self.window.ai_button.clicked.connect(self.open_ai_assistant_dialog)
         self.window.show_covers_action.setChecked(
             self.settings.get('show_covers', False))
+
+        QTimer.singleShot(100, self.show_welcome_dialog)
 
     # --- Логика AI Ассистента ---
 
@@ -479,9 +485,29 @@ class SpotifyApp(QObject):
             "message": f"Успешно добавлено {len(track_ids)} треков."
         }
 
+    def show_welcome_dialog(self, force_show=False):
+        """
+        Показывает окно приветствия.
+        force_show=True: вызывается из меню, всегда показывает окно без галочки.
+        force_show=False: вызывается при старте, показывает окно с галочкой, если нужно.
+        """
+        # Если вызвано из меню "Справка"
+        if force_show:
+            dialog = WelcomeDialog(show_checkbox=False, parent=self.window)
+            dialog.exec()
+            return
+
+        # Если вызвано при запуске приложения
+        if self.settings.get('show_welcome', True):
+            dialog = WelcomeDialog(show_checkbox=True, parent=self.window)
+            dialog.exec()
+            # Сохраняем выбор пользователя только при запуске
+            self.settings['show_welcome'] = dialog.should_show_again()
+
     def load_settings(self):
         """Загружает детальные настройки из файла."""
         defaults = {
+            'show_welcome': True,
             'gemini_api_key': '',
             'show_covers': False,
             'sidebar_font_size': 10,
@@ -808,7 +834,10 @@ class SpotifyApp(QObject):
     def start_callback_server(self):
         handler_factory = lambda *args, **kwargs: CallbackHandler(
             *args, **kwargs, app_instance=self)
-        port = urlparse(self.auth_manager.redirect_uri).port
+
+        # --> ИСПРАВЛЕНИЕ: Используем импортированную константу <--
+        port = urlparse(REDIRECT_URI).port
+
         server_address = ('127.0.0.1', port)
         httpd = HTTPServer(server_address, handler_factory)
         server_thread = threading.Thread(
