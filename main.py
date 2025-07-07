@@ -487,21 +487,23 @@ class SpotifyApp(QObject):
 
     def show_welcome_dialog(self, force_show=False):
         """
-        Показывает окно приветствия.
-        force_show=True: вызывается из меню, всегда показывает окно без галочки.
-        force_show=False: вызывается при старте, показывает окно с галочкой, если нужно.
+        Показывает окно приветствия, используя актуальный размер шрифта.
         """
-        # Если вызвано из меню "Справка"
+        # Получаем размер шрифта для боковой панели из настроек
+        font_size = self.settings.get('sidebar_font_size', 10)
+
         if force_show:
-            dialog = WelcomeDialog(show_checkbox=False, parent=self.window)
+            # Передаем размер шрифта и скрываем галочку
+            dialog = WelcomeDialog(font_size=font_size,
+                                   show_checkbox=False, parent=self.window)
             dialog.exec()
             return
 
-        # Если вызвано при запуске приложения
         if self.settings.get('show_welcome', True):
-            dialog = WelcomeDialog(show_checkbox=True, parent=self.window)
+            # Передаем размер шрифта и показываем галочку
+            dialog = WelcomeDialog(font_size=font_size,
+                                   show_checkbox=True, parent=self.window)
             dialog.exec()
-            # Сохраняем выбор пользователя только при запуске
             self.settings['show_welcome'] = dialog.should_show_again()
 
     def load_settings(self):

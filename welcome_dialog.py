@@ -11,10 +11,14 @@ class WelcomeDialog(QDialog):
     Диалоговое окно с приветствием и подсказками по использованию.
     """
 
-    def __init__(self, show_checkbox: bool = True, parent=None):
+    def __init__(self, font_size: int, show_checkbox: bool = True, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Добро пожаловать в Spotify Manager!")
         self.setMinimumWidth(500)
+
+        dialog_font = self.font()
+        dialog_font.setPointSize(font_size)
+        self.setFont(dialog_font)
 
         layout = QVBoxLayout(self)
         tips_text = """
