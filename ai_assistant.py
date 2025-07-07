@@ -76,47 +76,55 @@ class AIAssistant:
 
     def list_supported_models(self, show_all: bool = False, **kwargs) -> list[str]:
         """
-        Получает список моделей и фильтрует его.
-        В случае ошибки API, выбрасывает исключение.
+        Получает список моделей и применяет фильтр.
+        (ОТЛАДОЧНАЯ ВЕРСИЯ)
         """
         if not self.is_active:
             raise ConnectionError("AI-ассистент не был инициализирован.")
 
-        print(f"Запрос списка AI моделей (Показать все: {show_all})...")
+        print("\n--- ОТЛАДКА: Запрос списка AI моделей ---")
 
-        # --> УБИРАЕМ TRY...EXCEPT, ЧТОБЫ ОШИБКИ ПРОБРАСЫВАЛИСЬ ВЫШЕ <--
+        try:
+            # Сначала получаем абсолютно все модели от API
+            all_listed_models = list(genai.list_models())
 
-        EXCLUDE_KEYWORDS = {'vision', 'preview', 'exp',
-                            'lite', 'tts', 'thinking', 'code', 'gemma'}
-        all_models = [m.name.split('/')[-1] for m in genai.list_models()
-                      if 'generateContent' in m.supported_generation_methods]
+            # --> ГЛАВНЫЙ ОТЛАДОЧНЫЙ ВЫВОД <--
+            print(f"DEBUG: Получено {len(all_listed_models)} моделей от API.")
+            if all_listed_models:
+                print("--- НАЧАЛО СЫРОГО ОТВЕТА API (первые 5) ---")
+                for i, m in enumerate(all_listed_models[:5]):
+                    print(
+                        f"  - Модель {i+1}: name={m.name}, display_name={m.display_name}, methods={m.supported_generation_methods}")
+                print("--- КОНЕЦ СЫРОГО ОТВЕТА API ---\n")
 
-        if not show_all:
-            filtered_models = []
-            for model_name in all_models:
-                if any(keyword in model_name for keyword in EXCLUDE_KEYWORDS):
-                    continue
-                if model_name[-4:].startswith('-') and model_name[-3:].isdigit():
-                    continue
-                filtered_models.append(model_name)
-            main_models = filtered_models
-        else:
-            main_models = all_models
+            # Далее идет наша стандартная логика фильтрации
+            EXCLUDE_KEYWORDS = {'vision', 'preview', 'exp',
+                                'lite', 'tts', 'thinking', 'code', 'gemma'}
+            main_models = []
 
-            # Сортируем итоговый список
+            for m in all_listed_models:
+                if 'generateContent' in m.supported_generation_methods:
+                    model_name = m.name.split('/')[-1]
+                    if not show_all:
+                        if any(keyword in model_name for keyword in EXCLUDE_KEYWORDS):
+                            continue
+                        if model_name[-4:].startswith('-') and model_name[-3:].isdigit():
+                            continue
+                    main_models.append(model_name)
+
             def sort_key(name):
-                # ... (логика сортировки остается без изменений) ...
-                family_prio = 0 if 'gemini' in name else (
-                    1 if 'gemma' in name else 2)
-                tier_prio = 0 if 'pro' in name else (
-                    1 if 'flash' in name else 2)
+                family_prio = 0 if 'gemini' in name else 1
+                tier_prio = 0 if 'pro' in name else 1
                 latest_prio = 0 if 'latest' in name else 1
                 version_match = re.search(r'(\d\.\d|\d)', name)
                 version = float(version_match.group(1)) if version_match else 0
                 return (family_prio, -version, tier_prio, latest_prio)
 
             main_models.sort(key=sort_key)
-
-            main_models.sort(key=sort_key)
-            print(f"Итоговый список моделей для отображения: {main_models}")
+            print(f"Отфильтрованный список для UI: {main_models}")
             return main_models
+
+        except Exception as e:
+            print(
+                f"---!!! КРИТИЧЕСКАЯ ОШИБКА при вызове genai.list_models(): {e} !!!---")
+            raise

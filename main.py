@@ -240,33 +240,50 @@ class SpotifyApp(QObject):
         )
 
     def _on_ai_models_loaded(self, models: list):
-        """Вызывается после загрузки списка моделей и открывает главный диалог AI."""
-        if not isinstance(models, list):
-            self.restore_ui()
+        """
+        Вызывается после загрузки списка моделей.
+        Открывает главный диалог AI или показывает ошибку.
+        """
+        print("DEBUG: Получен результат от воркера загрузки моделей.")
+
+        # Сначала всегда восстанавливаем интерфейс (убираем прогресс-бар и т.д.)
+        # Метод restore_ui теперь вызывается автоматически при завершении потока.
+
+        if not isinstance(models, list) or not models:
+            # Если пришел не список или список пуст, показываем ошибку
             self.update_status("Не удалось загрузить список AI моделей.")
+            QMessageBox.warning(
+                self.window,
+                "Ошибка загрузки моделей",
+                "Не удалось получить список AI моделей от Google.\n\n"
+                "Возможные причины:\n"
+                "- Проблемы с интернет-соединением.\n"
+                "- Неверный или неактивный API ключ.\n"
+                "- Сервис недоступен в вашем регионе."
+            )
             return
 
+        print(
+            f"DEBUG: Модели загружены, открываю диалог AI с {len(models)} моделями.")
+        # Создаем и показываем диалог, передав ему свежий список моделей
         dialog = AiDialog(self.playlists, models, self.window)
 
-        # --> ИЗМЕНЕНИЕ: Подключаем новые, более сложные сигналы <--
-        dialog.generate_from_prompt_requested.connect(
-            lambda prompt, model, num: self.handle_ai_generation(
-                dialog, prompt=prompt, model_name=model, num_tracks=num
-            )
-        )
-        dialog.generate_from_playlist_requested.connect(
-            lambda p_id, model, num, ref_prompt: self.handle_ai_generation(
-                dialog, playlist_id=p_id, model_name=model, num_tracks=num, refining_prompt=ref_prompt
-            )
-        )
-
-        dialog.add_selected_to_playlist_requested.connect(
-            self.add_ai_tracks_to_playlist)
-        dialog.change_api_key_requested.connect(self.prompt_for_api_key)
+        # Подключаем все сигналы от диалога к нашим обработчикам
         dialog.show_all_models_toggled.connect(
             lambda checked: self._handle_show_all_models_toggle(
                 dialog, checked)
         )
+        dialog.generate_from_prompt_requested.connect(
+            lambda p, m, n: self.handle_ai_generation(
+                dialog, prompt=p, model_name=m, num_tracks=n)
+        )
+        dialog.generate_from_playlist_requested.connect(
+            lambda pid, m, n, rp: self.handle_ai_generation(
+                dialog, playlist_id=pid, model_name=m, num_tracks=n, refining_prompt=rp)
+        )
+        dialog.add_selected_to_playlist_requested.connect(
+            self.add_ai_tracks_to_playlist)
+        dialog.change_api_key_requested.connect(self.prompt_for_api_key)
 
         dialog.exec()
 
