@@ -872,7 +872,7 @@ class SpotifyApp(QObject):
 
     def _search_tracks_worker(self, query, cancellation_check=None, progress_callback=None, **kwargs):
         """
-        Рабочий метод для поиска: находит ID, догружает детали из кэша/сети.
+        Рабочий метод для поиска: находит ID, догружает детали и обложки.
         """
         # 1. Получаем список ID по поисковому запросу
         found_ids = self.spotify_client.search_tracks(query, **kwargs)
@@ -883,16 +883,23 @@ class SpotifyApp(QObject):
         new_ids_to_fetch = [
             tid for tid in found_ids if tid not in self.track_cache]
 
-        # 3. Если есть новые треки, загружаем их детали
+        # 3. Если есть новые треки, загружаем их детали и обновляем кэш
         if new_ids_to_fetch:
-            # Здесь мы не можем показать детальный прогресс, так как не знаем заранее, сколько треков найдем
-            print(
-                f"Поиск нашел {len(found_ids)} треков, из них {len(new_ids_to_fetch)} новых. Загрузка деталей...")
             new_details = self.spotify_client.get_tracks_details(
                 new_ids_to_fetch)
             self.track_cache.update(new_details)
 
-        # 4. Собираем итоговый список для отображения из глобального кэша
+        # 4. Собираем предварительный список треков для этой операции
+        tracks_for_this_search = [self.track_cache[tid]
+                                  for tid in found_ids if tid in self.track_cache]
+
+        # 5. Если опция включена, сразу скачиваем для них недостающие обложки
+        if self.window.show_covers_action.isChecked():
+            self.update_status("Загрузка обложек для результатов поиска...", 0)
+            self._download_covers_for_tracks(
+                tracks_for_this_search, cancellation_check)
+
+        # 6. Возвращаем полностью готовый для отображения список
         return [self.track_cache[tid] for tid in found_ids if tid in self.track_cache]
 
     def _fetch_and_cache_playlist(self, playlist_id, snapshot_id, cancellation_check=None, progress_callback=None, **kwargs):
@@ -1074,7 +1081,7 @@ class SpotifyApp(QObject):
                 self.display_tracks_from_playlist(items[0])
 
     def search_and_display_tracks(self):
-        """Инициирует фоновый поиск треков с использованием кэша."""
+        """Инициирует фоновый поиск треков, сбрасывая выделение плейлиста."""
         if not self.spotify_client:
             return self.update_status("Сначала войдите в Spotify.")
 
@@ -1082,12 +1089,16 @@ class SpotifyApp(QObject):
         if not query:
             return
 
+        # --> ИЗМЕНЕНИЕ: Сбрасываем выделение в списке плейлистов <--
+        self.window.playlist_list.clearSelection()
+        self.current_playlist_id = None  # Также сбрасываем ID текущего плейлиста
+
         self.is_playlist_view = False
         self.current_playlist_name = f"Результаты поиска по '{query}'"
 
         self.run_long_task(
             self._search_tracks_worker,
-            self.on_tracks_loaded,  # Используем тот же обработчик, что и для плейлистов
+            self.on_tracks_loaded,
             query,
             label_text=f"Поиск по запросу: '{query}'..."
         )
@@ -1407,24 +1418,27 @@ class SpotifyApp(QObject):
 
     def on_tracks_loaded(self, tracks):
         """
-        Финальный слот: отображает треки и принудительно запускает загрузку обложек, если нужно.
+        Финальный слот: отображает треки и, если нужно, запускает
+        фоновую дозагрузку обложек для плейлистов.
         """
         if not isinstance(tracks, list):
             self.update_status(str(tracks))
             self.populate_track_table([])
             return
 
-        # 1. Сразу отображаем текстовую информацию
+        # 1. Сразу отображаем все данные, которые у нас есть на данный момент
         self.populate_track_table(tracks)
         self.update_status(f"Загружено {len(tracks)} треков.")
 
-        # 2. ПРИНУДИТЕЛЬНЫЙ ЗАПУСК
-        # Если опция уже была включена, имитируем ее повторное включение,
-        # чтобы запустить гарантированно работающий процесс загрузки.
-        if self.window.show_covers_action.isChecked():
-            print("Принудительный запуск загрузки обложек для нового плейлиста...")
-            # Используем таймер, чтобы этот вызов не конфликтовал с завершением текущего потока
-            QTimer.singleShot(50, lambda: self.toggle_cover_visibility(True))
+        # 2. ПРОВЕРКА: Если мы сейчас смотрим плейлист (а не результаты поиска)
+        #    и включен режим показа обложек, запускаем их фоновую дозагрузку.
+        if self.is_playlist_view and self.window.show_covers_action.isChecked():
+            print("Режим просмотра плейлиста, запускаю проверку и дозагрузку обложек...")
+            self.run_long_task(
+                self._download_covers_worker,
+                self.on_covers_downloaded,
+                label_text="Загрузка обложек..."
+            )
 
     def on_export_finished(self, success):
         self.update_status(

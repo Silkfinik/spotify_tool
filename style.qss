@@ -1,60 +1,193 @@
-/* style.qss (v3 - Larger Font) */
+/* style.qss (vFINAL - Fixed) */
 
 /* Палитра:
-    #121212 - Основной фон окна
-    #1E1E1E - Фон для виджетов контента
-    #2A2A2A - Фон для кнопок и полей ввода
-    #535353 - Цвет рамок и разделителей
-    #E0E0E0 - Основной цвет текста
+    #121212 - Фон
+    #191919 - Фон контента (чуть светлее)
+    #282828 - Фон элементов (кнопки, поля)
+    #535353 - Приглушенные рамки / вторичный текст
+    #B3B3B3 - Основной текст
     #FFFFFF - Яркий текст
-    #1DB954 - Акцентный
+    #1DB954 - Главный акцент (Spotify Green)
+    #1ED760 - Более яркий зеленый для акцентов
 */
+
+/* --- Глобальные настройки --- */
+* {
+    border: none;
+    outline: 0;
+}
 
 QWidget {
     background-color: #121212;
-    color: #E0E0E0;
+    color: #B3B3B3;
     font-family: "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
-    font-size: 10pt; /* <-- ИЗМЕНЕНИЕ: Увеличен базовый шрифт */
-    border: none;
 }
 
-QMainWindow {
-    background-color: #121212;
-}
+/* --- Динамические шрифты (остаются без изменений) --- */
+QListWidget[fontSize="8"] { font-size: 8pt; }
+QListWidget[fontSize="9"] { font-size: 9pt; }
+QListWidget[fontSize="10"] { font-size: 10pt; }
+QListWidget[fontSize="11"] { font-size: 11pt; }
+QListWidget[fontSize="12"] { font-size: 12pt; }
+QListWidget[fontSize="13"] { font-size: 13pt; }
+QListWidget[fontSize="14"] { font-size: 14pt; }
+QTableWidget[fontSize="8"] { font-size: 8pt; }
+QTableWidget[fontSize="9"] { font-size: 9pt; }
+QTableWidget[fontSize="10"] { font-size: 10pt; }
+QTableWidget[fontSize="11"] { font-size: 11pt; }
+QTableWidget[fontSize="12"] { font-size: 12pt; }
+QTableWidget[fontSize="13"] { font-size: 13pt; }
+QTableWidget[fontSize="14"] { font-size: 14pt; }
 
+/* --- Кнопки --- */
 QPushButton {
-    background-color: #2A2A2A;
+    background-color: #282828;
     color: #FFFFFF;
-    border: 1px solid #535353;
-    padding: 8px 16px;
     border-radius: 15px;
-    min-height: 14px;
+    padding: 8px 16px;
+    font-weight: bold;
+    /* transition убран */
 }
 QPushButton:hover {
-    background-color: #3C3C3C;
-    border-color: #777777;
+    background-color: #383838;
 }
 QPushButton:pressed {
-    background-color: #1DB954;
-    border-color: #1DB954;
+    background-color: #1ED760;
 }
 QPushButton:disabled {
     background-color: #1A1A1A;
     color: #535353;
-    border-color: #282828;
 }
 
+/* --- Поля ввода --- */
 QLineEdit {
-    background-color: #2A2A2A;
-    border: 1px solid #535353;
-    padding: 6px;
+    background-color: #191919;
+    /* --> ИЗМЕНЕНО: Имитируем глубину с помощью разных цветов рамки <-- */
+    border: 1px solid #282828;
+    border-bottom-color: #121212;
+    border-right-color: #121212;
+    padding: 8px;
     border-radius: 5px;
     color: #E0E0E0;
 }
-QLineEdit::placeholder {
-    color: #808080;
+QLineEdit:focus {
+    border: 1px solid #1DB954;
 }
 
+/* --- Списки и таблицы --- */
+QTableWidget, QListWidget {
+    background-color: #121212;
+    border: none;
+    gridline-color: #191919;
+}
+QTableWidget::item, QListWidget::item {
+    padding: 0 8px;
+    border-bottom: 1px solid #1E1E1E;
+    /* transition убран */
+}
+QTableWidget::item:hover, QListWidget::item:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+QTableWidget::item:selected, QListWidget::item:selected {
+    background-color: #2A2A2A;
+    color: #FFFFFF;
+}
+QListWidget::item:selected {
+    border-left: 3px solid #1ED760;
+    padding-left: 5px;
+}
+
+/* --- Заголовки --- */
+QHeaderView::section {
+    background-color: #121212;
+    color: #B3B3B3;
+    padding: 8px;
+    border-bottom: 2px solid #282828;
+    text-transform: uppercase;
+    font-weight: bold;
+    font-size: 9pt;
+}
+QHeaderView::section:vertical {
+    border: none;
+    font-weight: normal;
+}
+QTableCornerButton::section {
+    background-color: #121212;
+    border-bottom: 2px solid #282828;
+}
+
+/* --- Скроллбары --- */
+QScrollBar:vertical, QScrollBar:horizontal {
+    border: none;
+    background: #121212;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle {
+    background: #2A2A2A;
+    min-height: 25px;
+    border-radius: 5px;
+}
+QScrollBar::handle:hover {
+    background: #1DB954;
+}
+
+/* --- Контекстное меню --- */
+QMenu {
+    background-color: #282828;
+    border: 1px solid #535353; /* Более заметная рамка вместо тени */
+    border-radius: 5px;
+    padding: 5px;
+}
+QMenu::item {
+    padding: 8px 20px;
+    background-color: transparent;
+    border-radius: 3px;
+}
+QMenu::item:selected {
+    background-color: #1DB954;
+}
+QMenu::separator {
+    height: 1px;
+    background: #535353;
+    margin: 4px 0;
+}
+
+/* --- Прогресс-бар --- */
+QProgressBar {
+    border: none;
+    border-radius: 5px;
+    background-color: #2A2A2A;
+    text-align: center;
+    color: white;
+    font-weight: bold;
+}
+QProgressBar::chunk {
+    border-radius: 5px;
+    background-color: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #1DB954, stop: 0.8 #1ED760, stop: 1 #1DB954
+    );
+}
+
+/* --- Кнопка отмены в строке состояния --- */
+QPushButton#StatusBarCancelButton {
+    background-color: transparent;
+    color: #B3B3B3;
+    border: none;
+    padding: 4px;
+    font-weight: normal;
+}
+QPushButton#StatusBarCancelButton:hover {
+    color: #D32F2F;
+}
+
+/* --- Оверлей --- */
+QFrame#Overlay {
+    background-color: rgba(18, 18, 18, 0.8); 
+}
+
+/* --- Выпадающие списки в диалогах --- */
 QComboBox {
     background-color: #2A2A2A;
     border: 1px solid #535353;
@@ -72,68 +205,7 @@ QComboBox QAbstractItemView {
     outline: 0px;
 }
 
-QTableWidget, QListWidget {
-    background-color: #1E1E1E;
-    border: 1px solid #2A2A2A;
-    gridline-color: #2A2A2A;
-}
-
-QTableWidget::item {
-    padding-left: 5px;
-    /* font-size теперь наследуется от QWidget */
-    font-weight: normal;
-}
-QListWidget::item {
-    padding: 5px; /* Отступы для элементов списка плейлистов */
-}
-QTableWidget::item:selected, QListWidget::item:selected {
-    background-color: #1DB954;
-    color: #FFFFFF;
-}
-
-QHeaderView::section {
-    background-color: #2A2A2A;
-    color: #FFFFFF;
-    padding: 6px;
-    border: none;
-    border-bottom: 1px solid #535353;
-    font-weight: bold;
-}
-QHeaderView::section:vertical {
-    font-weight: normal;
-    color: #B3B3B3;
-    border-bottom: 1px solid #2A2A2A;
-}
-QTableCornerButton::section {
-    background-color: #2A2A2A;
-    border-bottom: 1px solid #535353;
-}
-
-QSplitter::handle {
-    background-color: #2A2A2A;
-}
-QSplitter::handle:hover {
-    background-color: #1DB954;
-}
-
-QScrollBar:vertical, QScrollBar:horizontal {
-    border: none;
-    background: #1E1E1E;
-    width: 10px;
-    margin: 0px;
-}
-QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
-    background: #535353;
-    min-height: 20px;
-    border-radius: 5px;
-}
-QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
-    background: #1DB954;
-}
-
-QDialog {
-    background-color: #1E1E1E;
-}
+/* --- Группы в диалогах --- */
 QGroupBox {
     font-weight: bold;
     border: 1px solid #2A2A2A;
@@ -145,63 +217,3 @@ QGroupBox::title {
     subcontrol-position: top left;
     padding: 0 5px;
 }
-
-QMenu {
-    background-color: #2A2A2A;
-    border: 1px solid #535353;
-}
-QMenu::item:selected {
-    background-color: #1DB954;
-}
-
-QProgressBar {
-    border: 1px solid #535353;
-    border-radius: 7px;
-    background-color: #2A2A2A;
-    text-align: center;
-    color: #FFFFFF;
-}
-QProgressBar::chunk {
-    background-color: #1DB954;
-    border-radius: 6px;
-}
-
-QPushButton#StatusBarCancelButton {
-    background-color: #535353;
-    color: #E0E0E0;
-    border: none;
-    padding: 4px 8px;
-    border-radius: 7px;
-    min-height: 12px;
-}
-QPushButton#StatusBarCancelButton:hover {
-    background-color: #D32F2F;
-    color: #FFFFFF;
-}
-QPushButton#StatusBarCancelButton:pressed {
-    background-color: #B71C1C;
-}
-
-QFrame#Overlay {
-    background-color: rgba(18, 18, 18, 0.7);
-}
-
-/* --- Динамические шрифты --- */
-
-/* Боковая панель */
-QListWidget[fontSize="8"] { font-size: 8pt; }
-QListWidget[fontSize="9"] { font-size: 9pt; }
-QListWidget[fontSize="10"] { font-size: 10pt; }
-QListWidget[fontSize="11"] { font-size: 11pt; }
-QListWidget[fontSize="12"] { font-size: 12pt; }
-QListWidget[fontSize="13"] { font-size: 13pt; }
-QListWidget[fontSize="14"] { font-size: 14pt; }
-
-/* Таблица */
-QTableWidget[fontSize="8"] { font-size: 8pt; }
-QTableWidget[fontSize="9"] { font-size: 9pt; }
-QTableWidget[fontSize="10"] { font-size: 10pt; }
-QTableWidget[fontSize="11"] { font-size: 11pt; }
-QTableWidget[fontSize="12"] { font-size: 12pt; }
-QTableWidget[fontSize="13"] { font-size: 13pt; }
-QTableWidget[fontSize="14"] { font-size: 14pt; }
