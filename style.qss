@@ -1,17 +1,5 @@
-/* style.qss (vFINAL - Fixed) */
+/* style.qss (vFINAL - Fixed, No unsupported properties) */
 
-/* Палитра:
-    #121212 - Фон
-    #191919 - Фон контента (чуть светлее)
-    #282828 - Фон элементов (кнопки, поля)
-    #535353 - Приглушенные рамки / вторичный текст
-    #B3B3B3 - Основной текст
-    #FFFFFF - Яркий текст
-    #1DB954 - Главный акцент (Spotify Green)
-    #1ED760 - Более яркий зеленый для акцентов
-*/
-
-/* --- Глобальные настройки --- */
 * {
     border: none;
     outline: 0;
@@ -19,11 +7,11 @@
 
 QWidget {
     background-color: #121212;
-    color: #B3B3B3;
+    color: #E0E0E0;
     font-family: "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
 }
 
-/* --- Динамические шрифты (остаются без изменений) --- */
+/* --- Динамические шрифты --- */
 QListWidget[fontSize="8"] { font-size: 8pt; }
 QListWidget[fontSize="9"] { font-size: 9pt; }
 QListWidget[fontSize="10"] { font-size: 10pt; }
@@ -46,7 +34,6 @@ QPushButton {
     border-radius: 15px;
     padding: 8px 16px;
     font-weight: bold;
-    /* transition убран */
 }
 QPushButton:hover {
     background-color: #383838;
@@ -62,16 +49,19 @@ QPushButton:disabled {
 /* --- Поля ввода --- */
 QLineEdit {
     background-color: #191919;
-    /* --> ИЗМЕНЕНО: Имитируем глубину с помощью разных цветов рамки <-- */
-    border: 1px solid #282828;
-    border-bottom-color: #121212;
-    border-right-color: #121212;
+    /* Имитируем глубину с помощью разных цветов рамки */
+    border: 1px solid #535353;
+    border-top-color: #121212;
+    border-left-color: #121212;
     padding: 8px;
     border-radius: 5px;
     color: #E0E0E0;
 }
 QLineEdit:focus {
     border: 1px solid #1DB954;
+}
+QLineEdit::placeholder {
+    color: #808080;
 }
 
 /* --- Списки и таблицы --- */
@@ -83,7 +73,6 @@ QTableWidget, QListWidget {
 QTableWidget::item, QListWidget::item {
     padding: 0 8px;
     border-bottom: 1px solid #1E1E1E;
-    /* transition убран */
 }
 QTableWidget::item:hover, QListWidget::item:hover {
     background-color: rgba(255, 255, 255, 0.03);
@@ -135,8 +124,8 @@ QScrollBar::handle:hover {
 /* --- Контекстное меню --- */
 QMenu {
     background-color: #282828;
-    border: 1px solid #535353; /* Более заметная рамка вместо тени */
-    border-radius: 5px;
+    border: 1px solid #535353;
+    border-radius: 8px;
     padding: 5px;
 }
 QMenu::item {
@@ -164,22 +153,25 @@ QProgressBar {
 }
 QProgressBar::chunk {
     border-radius: 5px;
-    background-color: qlineargradient(
-        x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 #1DB954, stop: 0.8 #1ED760, stop: 1 #1DB954
-    );
+    background-color: #1DB954; /* Убрали анимированный градиент для совместимости */
 }
 
 /* --- Кнопка отмены в строке состояния --- */
 QPushButton#StatusBarCancelButton {
-    background-color: transparent;
-    color: #B3B3B3;
+    background-color: #424242;
+    color: #E0E0E0;
     border: none;
-    padding: 4px;
+    padding: 4px 8px;
+    border-radius: 7px;
+    min-height: 12px;
     font-weight: normal;
 }
 QPushButton#StatusBarCancelButton:hover {
-    color: #D32F2F;
+    background-color: #D32F2F;
+    color: #FFFFFF;
+}
+QPushButton#StatusBarCancelButton:pressed {
+    background-color: #B71C1C;
 }
 
 /* --- Оверлей --- */
@@ -187,29 +179,21 @@ QFrame#Overlay {
     background-color: rgba(18, 18, 18, 0.8); 
 }
 
-/* --- Выпадающие списки в диалогах --- */
-QComboBox {
-    background-color: #2A2A2A;
-    border: 1px solid #535353;
-    padding: 6px;
+/* --- Диалоговые окна --- */
+QDialog {
+    background-color: #1E1E1E;
+}
+QComboBox, QPlainTextEdit {
+    background-color: #191919;
+    border: 1px solid #282828;
+    padding: 8px;
     border-radius: 5px;
+    color: #E0E0E0;
 }
-QComboBox::drop-down {
-    border: none;
-    padding-right: 5px;
-}
-QComboBox QAbstractItemView {
-    background-color: #2A2A2A;
-    selection-background-color: #1DB954;
-    border: 1px solid #535353;
-    outline: 0px;
-}
-
-/* --- Группы в диалогах --- */
 QGroupBox {
     font-weight: bold;
     border: 1px solid #2A2A2A;
-    border-radius: 5px;
+    border-radius: 8px;
     margin-top: 10px;
 }
 QGroupBox::title {

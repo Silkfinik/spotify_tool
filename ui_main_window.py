@@ -14,7 +14,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Spotify Manager")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1400, 800)
         self.statusBar()
 
         menu_bar = self.menuBar()

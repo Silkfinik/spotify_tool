@@ -12,13 +12,13 @@ import json
 from functools import partial
 from settings_dialog import SettingsDialog
 
-from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog, QListWidgetItem, QMessageBox, QProgressDialog, QInputDialog
+from PyQt6.QtWidgets import QApplication, QTableWidgetItem, QFileDialog, QMenu, QMessageBox, QProgressDialog, QListWidgetItem, QMessageBox, QProgressDialog, QInputDialog, QLabel
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QTimer, QSize
 from PyQt6.QtGui import QCursor
 from PyQt6.QtWidgets import QProgressBar, QPushButton
 from PyQt6.QtWidgets import QProgressDialog
 from PyQt6.QtGui import QIcon
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QPainter, QPainterPath
 
 from ui_main_window import MainWindow
 from auth_manager import AuthManager
@@ -53,6 +53,42 @@ def chunks(iterable, size=100):
     iterator = iter(iterable)
     while chunk := list(islice(iterator, size)):
         yield chunk
+
+
+def create_rounded_pixmap(source_pixmap: QPixmap, size: QSize) -> QPixmap:
+    """
+    Создает идеально скругленную и отмасштабированную версию изображения.
+    """
+    if source_pixmap.isNull():
+        return QPixmap(size)  # Возвращаем пустой квадрат нужного размера
+
+    # 1. Создаем итоговое изображение (квадратное) с прозрачным фоном
+    result_pixmap = QPixmap(size)
+    result_pixmap.fill(Qt.GlobalColor.transparent)
+
+    # 2. Масштабируем исходное изображение так, чтобы оно полностью покрывало
+    #    нашу целевую область, сохраняя пропорции. Лишнее обрежется.
+    scaled_pixmap = source_pixmap.scaled(size,
+                                         Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                         Qt.TransformationMode.SmoothTransformation)
+
+    # 3. Начинаем рисовать на нашем прозрачном итоговом изображении
+    painter = QPainter(result_pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    # 4. Создаем путь в виде скругленного прямоугольника
+    path = QPainterPath()
+    path.addRoundedRect(0, 0, size.width(), size.height(),
+                        4, 4)  # Радиус скругления 4px
+
+    # 5. Устанавливаем этот путь как "трафарет" для обрезки
+    painter.setClipPath(path)
+
+    # 6. Рисуем отмасштабированное изображение
+    painter.drawPixmap(0, 0, scaled_pixmap)
+    painter.end()
+
+    return result_pixmap
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
@@ -1473,7 +1509,7 @@ class SpotifyApp(QObject):
             self.update_status("Не удалось удалить плейлист.")
 
     def populate_track_table(self, tracks: list[dict]):
-        """Очищает и заполняет таблицу треков, правильно масштабируя обложки."""
+        """Очищает и заполняет таблицу треков, правильно масштабируя и скругляя обложки."""
         self.window.track_table.blockSignals(True)
         self.window.track_table.setRowCount(0)
         self.window.track_table.setRowCount(len(tracks))
@@ -1482,29 +1518,28 @@ class SpotifyApp(QObject):
         icon_size = self.window.track_table.iconSize()
 
         for row_num, track_data in enumerate(tracks):
-            # Ячейка для обложки
+            # --> НОВАЯ, НАДЕЖНАЯ ЛОГИКА ОТОБРАЖЕНИЯ ОБЛОЖКИ (Колонка 0) <--
             if show_covers:
-                cover_item = QTableWidgetItem()
-                self.window.track_table.setItem(row_num, 0, cover_item)
-
+                cover_label = QLabel()
+                cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 cover_path = track_data.get('cover_path')
+
                 if cover_path and os.path.exists(cover_path):
-                    pixmap = QPixmap(cover_path)
-                    # --> ГЛАВНОЕ ИЗМЕНЕНИЕ: Масштабируем с сохранением пропорций <--
-                    scaled_pixmap = pixmap.scaled(
-                        icon_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    source_pixmap = QPixmap(cover_path)
+                    rounded_pixmap = create_rounded_pixmap(
+                        source_pixmap, icon_size)
+                    cover_label.setPixmap(rounded_pixmap)
 
-                    icon = QIcon(scaled_pixmap)
-                    cover_item.setIcon(icon)
+                self.window.track_table.setCellWidget(row_num, 0, cover_label)
 
-            # Остальные ячейки
-            name_item = QTableWidgetItem(track_data['name'])
+            # --- Остальные колонки ---
+            name_item = QTableWidgetItem(track_data.get('name', ''))
             name_item.setData(Qt.ItemDataRole.UserRole, track_data.get('id'))
             self.window.track_table.setItem(row_num, 1, name_item)
             self.window.track_table.setItem(
-                row_num, 2, QTableWidgetItem(track_data['artist']))
+                row_num, 2, QTableWidgetItem(track_data.get('artist', '')))
             self.window.track_table.setItem(
-                row_num, 3, QTableWidgetItem(track_data['album']))
+                row_num, 3, QTableWidgetItem(track_data.get('album', '')))
 
         self.window.track_table.blockSignals(False)
         self.window.export_button.setEnabled(len(tracks) > 0)
