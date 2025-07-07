@@ -654,10 +654,34 @@ class SpotifyApp(QObject):
         self.worker = None
 
     def on_task_error(self, error_info):
+        """
+        Обрабатывает ошибку из потока и показывает информативное окно.
+        """
+        exc_type, exc_value, exc_traceback = error_info
+
         print("Произошла ошибка в рабочем потоке:")
-        print(error_info[2])
-        self.update_status(f"Ошибка: {error_info[1]}")
-        self.restore_ui()
+        print(exc_traceback)
+
+        error_message = str(exc_value)
+        user_friendly_message = f"<b>Произошла непредвиденная ошибка:</b><br><br>{error_message}"
+
+        # --> НОВАЯ ЛОГИКА: Проверяем текст ошибки <--
+        if "User location is not supported" in error_message:
+            user_friendly_message = (
+                "<b>Не удалось получить доступ к API Google.</b><br><br>"
+                "Вероятная причина: сервисы Google AI в данный момент недоступны в вашем регионе. "
+                "Пожалуйста, попробуйте использовать VPN или проверьте статус доступности сервиса для вашей страны."
+            )
+
+        # Показываем всплывающее окно с ошибкой
+        QMessageBox.critical(
+            self.window,
+            "Ошибка операции",
+            user_friendly_message
+        )
+
+        self.update_status(f"Ошибка: {error_message.split(':')[0]}")
+        self.restore_ui()  # Восстанавливаем интерфейс
 
     def cancel_task(self, silent: bool = False):
         if not silent:

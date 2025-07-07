@@ -76,38 +76,32 @@ class AIAssistant:
 
     def list_supported_models(self, show_all: bool = False, **kwargs) -> list[str]:
         """
-        Получает список моделей и фильтрует его, если не включен режим show_all.
+        Получает список моделей и фильтрует его.
+        В случае ошибки API, выбрасывает исключение.
         """
         if not self.is_active:
             raise ConnectionError("AI-ассистент не был инициализирован.")
 
         print(f"Запрос списка AI моделей (Показать все: {show_all})...")
 
-        # Ключевые слова для исключения в стандартном режиме
+        # --> УБИРАЕМ TRY...EXCEPT, ЧТОБЫ ОШИБКИ ПРОБРАСЫВАЛИСЬ ВЫШЕ <--
+
         EXCLUDE_KEYWORDS = {'vision', 'preview', 'exp',
                             'lite', 'tts', 'thinking', 'code', 'gemma'}
+        all_models = [m.name.split('/')[-1] for m in genai.list_models()
+                      if 'generateContent' in m.supported_generation_methods]
 
-        all_models = []
-        try:
-            # Сначала получаем абсолютно все поддерживаемые модели
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    all_models.append(m.name.split('/')[-1])
-
-            # Если не стоит флаг "показать все", применяем наш умный фильтр
-            if not show_all:
-                filtered_models = []
-                for model_name in all_models:
-                    if any(keyword in model_name for keyword in EXCLUDE_KEYWORDS):
-                        continue
-                    is_numbered_version = model_name[-4:].startswith(
-                        '-') and model_name[-3:].isdigit()
-                    if is_numbered_version:
-                        continue
-                    filtered_models.append(model_name)
-                main_models = filtered_models
-            else:
-                main_models = all_models
+        if not show_all:
+            filtered_models = []
+            for model_name in all_models:
+                if any(keyword in model_name for keyword in EXCLUDE_KEYWORDS):
+                    continue
+                if model_name[-4:].startswith('-') and model_name[-3:].isdigit():
+                    continue
+                filtered_models.append(model_name)
+            main_models = filtered_models
+        else:
+            main_models = all_models
 
             # Сортируем итоговый список
             def sort_key(name):
@@ -123,8 +117,6 @@ class AIAssistant:
 
             main_models.sort(key=sort_key)
 
+            main_models.sort(key=sort_key)
             print(f"Итоговый список моделей для отображения: {main_models}")
             return main_models
-        except Exception as e:
-            print(f"Не удалось получить список моделей: {e}")
-            return ['gemini-2.5-flash']
