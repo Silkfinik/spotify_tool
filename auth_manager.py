@@ -4,7 +4,8 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
 # ВАЖНО: Вставьте сюда ВАШ Client ID. Он не является секретом.
-CLIENT_ID = "3bed272eca794a1e96f19a97e9a5a38e"
+CLIENT_ID = "СЮДА_ВСТАВЬТЕ_ВАШ_CLIENT_ID"
+CLIENT_SECRET = "СЮДА_ВСТАВЬТЕ_ВАШ_CLIENT_SECRET"
 
 # Этот URI должен в точности совпадать с тем, что указан в настройках
 # вашего приложения на Spotify Developer Dashboard.
@@ -36,6 +37,7 @@ class AuthManager:
         # spotipy автоматически переключится на безопасный PKCE-поток.
         self.sp_oauth = SpotifyOAuth(
             client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
             redirect_uri=REDIRECT_URI,
             scope=scope,
             cache_path=CACHE_FILE
